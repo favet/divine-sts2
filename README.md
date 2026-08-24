@@ -52,7 +52,7 @@ See [.env.example](.env.example) for every override.
 Validate paths and start a real worker:
 
 ```powershell
-divine-sts2 doctor --deep
+python -m sts2_native_sim.cli doctor --deep
 ```
 
 Generate a small throughput sample:

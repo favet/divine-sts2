@@ -16,4 +16,4 @@ $env:STS2_GAME_ROOT = $gameRoot
 $env:STS2_ASSEMBLY = Join-Path $gameRoot 'data_sts2_windows_x86_64\sts2.dll'
 & (Join-Path $PSScriptRoot 'build-persistent-server.ps1') -Configuration Release
 if ($LASTEXITCODE -ne 0) { throw 'Native host build failed.' }
-divine-sts2 doctor --deep
+python -m sts2_native_sim.cli doctor --deep
