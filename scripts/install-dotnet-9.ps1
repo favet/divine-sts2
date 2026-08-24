@@ -10,6 +10,11 @@ if (-not (Test-Path -LiteralPath $installer)) {
 }
 if (-not (Test-Path -LiteralPath (Join-Path $destination 'dotnet.exe'))) {
     & $installer -Channel 9.0 -InstallDir $destination -NoPath
-    if ($LASTEXITCODE -ne 0) { throw ".NET SDK installation failed with exit code $LASTEXITCODE" }
+    $installerExit = 0
+    if (Test-Path variable:LASTEXITCODE) { $installerExit = [int]$LASTEXITCODE }
+    if ($installerExit -ne 0) { throw ".NET SDK installation failed with exit code $installerExit" }
+    if (-not (Test-Path -LiteralPath (Join-Path $destination 'dotnet.exe'))) {
+        throw ".NET SDK installation reported success, but dotnet.exe was not found under $destination."
+    }
 }
 Write-Output (Join-Path $destination 'dotnet.exe')

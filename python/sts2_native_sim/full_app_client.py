@@ -47,8 +47,14 @@ class FullAppBridgeClient:
                 if not dest.exists():
                     try:
                         os.link(item, dest)
-                    except Exception:
-                        pass
+                    except OSError:
+                        # Hardlinks cannot cross volumes (a common Steam/C: temp layout).
+                        # Copy only the top-level launcher/resources as a safe fallback.
+                        shutil.copy2(item, dest)
+
+        for required in ("SlayTheSpire2.exe", "SlayTheSpire2.pck"):
+            if not (self.sandbox_dir / required).is_file():
+                raise FileNotFoundError(f"Sandbox preparation did not produce {required}: {self.sandbox_dir}")
 
         # Junction heavy directories if missing
         for d in ["controller_config", "data_sts2_windows_x86_64"]:

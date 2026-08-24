@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import glob
@@ -439,6 +440,8 @@ class CommunityRunIngestionEngine:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Ingest reviewed community runs and compute tier statistics.")
+    parser.parse_args()
     print("=" * 80)
     print("STS2 COMMUNITY RUN INGESTION AND EMPIRICAL TIER STATS ENGINE")
     print("=" * 80)

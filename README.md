@@ -43,8 +43,14 @@ acceptance suite passes.
 ```powershell
 git clone https://github.com/favet/divine-sts2.git
 cd divine-sts2
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pwsh scripts/bootstrap.ps1
 ```
+
+Bootstrap builds the persistent host, imports the Godot C# solution, and runs
+deep doctor. It exits nonzero if the worker cannot complete its startup smoke;
+do not continue to rollout commands until that check passes.
 
 If Steam discovery fails, set `STS2_GAME_ROOT` to the installed game directory.
 See [.env.example](.env.example) for every override.
@@ -71,12 +77,20 @@ optional macro/card datasets. None are silently downloaded or distributed.
 
 ## Training on NVIDIA
 
-Install training dependencies and verify CUDA:
+Install training dependencies and verify CUDA. The generic PyPI dependency may
+install a CPU-only Torch build; NVIDIA users must select a Torch wheel matching
+their CUDA driver before running the command below:
 
 ```powershell
 pwsh scripts/bootstrap.ps1 -Train
-python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+python -c "import torch; print(torch.__version__, torch.cuda.is_available()); raise SystemExit(0 if torch.cuda.is_available() else 1)"
 ```
+
+To force a CUDA wheel, pass the official index selected for the friend’s driver
+and CUDA runtime, for example `-TorchIndexUrl
+https://download.pytorch.org/whl/cu124`. Use the current command from the
+[official PyTorch installer](https://pytorch.org/get-started/locally/) if that
+CUDA line has changed.
 
 The complete-state V12 trainer supports CUDA, mixed precision, pinned-memory
 loading, and episode-grouped validation:

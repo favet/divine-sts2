@@ -14,6 +14,7 @@ Multi-task training targets:
 
 from __future__ import annotations
 
+import argparse
 import concurrent.futures
 import json
 import os
@@ -332,7 +333,13 @@ def export_trajectories(num_workers: int = 4, runs_per_worker: int = 5) -> int:
     return 0
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("workers", nargs="?", type=int, default=4)
+    parser.add_argument("runs", nargs="?", type=int, default=5)
+    args = parser.parse_args(argv)
+    return export_trajectories(num_workers=args.workers, runs_per_worker=args.runs)
+
+
 if __name__ == "__main__":
-    workers = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    runs = int(sys.argv[2]) if len(sys.argv) > 2 else 5
-    sys.exit(export_trajectories(num_workers=workers, runs_per_worker=runs))
+    sys.exit(main())

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import gzip
+from glob import has_magic, glob
 import json
 import random
 import time
@@ -27,6 +27,16 @@ def read_rows(paths: list[str]) -> list[dict]:
         with open_text(path) as source:
             rows.extend(json.loads(line) for line in source if line.strip())
     return [row for row in rows if row.get("phase") == "combat"]
+
+
+def expand_shards(patterns: list[str]) -> list[str]:
+    paths: list[str] = []
+    for pattern in patterns:
+        matches = sorted(glob(pattern)) if has_magic(pattern) else [pattern]
+        if not matches:
+            raise FileNotFoundError(f"No training shards matched: {pattern}")
+        paths.extend(matches)
+    return paths
 
 
 def build_vocab(rows: list[dict]) -> dict[str, int]:
@@ -169,7 +179,7 @@ def main() -> None:
         parser.error("--device cuda requested, but torch.cuda.is_available() is false")
     device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else args.device if args.device != "auto" else "cpu")
     use_amp = bool(args.amp and device.type == "cuda")
-    rows = read_rows(args.shards); vocab = build_vocab(rows); dataset = CombatDataset(rows, vocab)
+    rows = read_rows(expand_shards(args.shards)); vocab = build_vocab(rows); dataset = CombatDataset(rows, vocab)
     episodes = sorted({sample["episode"] for sample in dataset.samples}); random.Random(args.seed).shuffle(episodes)
     train_episodes = set(episodes[:max(1, int(len(episodes) * .8))])
     train_indices = [i for i, sample in enumerate(dataset.samples) if sample["episode"] in train_episodes]

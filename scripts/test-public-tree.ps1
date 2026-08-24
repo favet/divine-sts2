@@ -14,9 +14,9 @@ $forbidden = git -C $root grep -n -E '(C:\\Users\\|F:\\SteamLibrary|ghp_[A-Za-z0
 if ($LASTEXITCODE -eq 0) { throw "Machine-specific path or token found:`n$forbidden" }
 if ($LASTEXITCODE -gt 1) { throw 'Source scan failed.' }
 
-$binaries = Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
-    $_.Extension -in @('.dll','.exe','.pck','.pt','.pth','.ckpt') -and $_.FullName -notmatch '[\\/](bin|obj|\.godot|artifacts|models|data|datasets)[\\/]'
+$trackedBinaries = git -C $root ls-files | Where-Object {
+    [IO.Path]::GetExtension($_) -in @('.dll','.exe','.pck','.pt','.pth','.ckpt')
 }
-if ($binaries) { throw "Forbidden distributable binaries found:`n$($binaries.FullName -join "`n")" }
+if ($trackedBinaries) { throw "Forbidden distributable binaries found in tracked files:`n$($trackedBinaries -join "`n")" }
 Write-Host 'Public-tree checks passed.'
 exit 0

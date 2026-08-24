@@ -16,9 +16,19 @@ function Get-DivineDotnet {
 }
 
 function Get-DivineGameRoot([string]$Explicit = '') {
+    $override = if ($Explicit) { $Explicit } else { $env:STS2_GAME_ROOT }
+    if ($override) {
+        $candidate = (Resolve-Path -LiteralPath $override -ErrorAction SilentlyContinue).Path
+        if (-not $candidate) { throw "Configured STS2_GAME_ROOT does not exist: $override" }
+        $exe = Join-Path $candidate 'SlayTheSpire2.exe'
+        $pck = Join-Path $candidate 'SlayTheSpire2.pck'
+        $dll = Join-Path $candidate 'data_sts2_windows_x86_64\sts2.dll'
+        if (-not ((Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $pck) -and (Test-Path -LiteralPath $dll))) {
+            throw "Configured STS2_GAME_ROOT is not a complete game install: $candidate"
+        }
+        return $candidate
+    }
     $candidates = [Collections.Generic.List[string]]::new()
-    if ($Explicit) { $candidates.Add($Explicit) }
-    if ($env:STS2_GAME_ROOT) { $candidates.Add($env:STS2_GAME_ROOT) }
     foreach ($programFiles in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
         if (-not $programFiles) { continue }
         $steam = Join-Path $programFiles 'Steam'

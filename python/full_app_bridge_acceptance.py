@@ -12,6 +12,7 @@ Validates:
 from __future__ import annotations
 
 import concurrent.futures
+import argparse
 import json
 import os
 import sys
@@ -278,5 +279,11 @@ def run_acceptance() -> int:
     return 0 if report["verdict"] == "GO_VERIFIED" else 1
 
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.parse_args(argv)
+    return run_acceptance()
+
+
 if __name__ == "__main__":
-    sys.exit(run_acceptance())
+    sys.exit(main())

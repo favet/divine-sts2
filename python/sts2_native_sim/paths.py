@@ -44,8 +44,18 @@ def _steam_roots() -> list[Path]:
 
 
 def find_game_root(explicit: str | Path | None = None) -> Path:
-    overrides = [explicit, os.environ.get("STS2_GAME_ROOT")]
-    candidates = [Path(value).expanduser() for value in overrides if value]
+    override = explicit or os.environ.get("STS2_GAME_ROOT")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if (
+            (candidate / "SlayTheSpire2.exe").is_file()
+            and (candidate / "SlayTheSpire2.pck").is_file()
+            and (candidate / GAME_DATA_DIRECTORY_NAME / "sts2.dll").is_file()
+        ):
+            return candidate
+        raise DiscoveryError(f"Configured STS2_GAME_ROOT is not a complete game install: {candidate}")
+
+    candidates: list[Path] = []
     candidates.extend(root / "steamapps" / "common" / GAME_DIRECTORY_NAME for root in _steam_roots())
     for candidate in candidates:
         candidate = candidate.resolve()

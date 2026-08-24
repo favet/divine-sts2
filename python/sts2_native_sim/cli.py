@@ -14,6 +14,11 @@ from typing import Any
 
 from .paths import DiscoveryError, REPOSITORY_ROOT, find_game_assembly, find_game_root, find_godot
 
+SUPPORTED_BUILD = {
+    "assembly_sha256": "A1F9E653F1E28E4076558FEE1E60D218619CB7E057B887C6417F62C62C6D7A52",
+    "pck_sha256": "42520EB8B0911C6C0F0BD102D92B33F41ABD4D26B83489817D0A6DBD7DD48587",
+}
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -64,6 +69,10 @@ def doctor(deep: bool = False) -> dict[str, Any]:
         game_root = Path(checks["game_root"])
         checks["sts2_assembly_sha256"] = _sha256(assembly)
         checks["sts2_pck_sha256"] = _sha256(game_root / "SlayTheSpire2.pck")
+        for key, expected in SUPPORTED_BUILD.items():
+            actual = checks["sts2_" + key]
+            if actual != expected:
+                failures.append(f"Unsupported game build: {key}={actual}; expected {expected}.")
         try:
             from .client import NativeWorker
 
@@ -73,7 +82,9 @@ def doctor(deep: bool = False) -> dict[str, Any]:
                     key: len(value) for key, value in worker.catalog().items() if isinstance(value, list)
                 }
         except Exception as error:  # The report should retain every earlier check.
-            failures.append(f"Native worker smoke failed: {error}")
+            details = getattr(error, "details", None)
+            suffix = f" details={details}" if details else ""
+            failures.append(f"Native worker smoke failed: {error}{suffix}")
 
     has_dotnet_9 = any(version.startswith("9.") for version in dotnet_sdks)
     checks["ok"] = not failures and has_dotnet_9

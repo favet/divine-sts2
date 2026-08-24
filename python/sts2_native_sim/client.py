@@ -80,8 +80,16 @@ class NativeWorker:
         self._start()
         try:
             self.build = self.hello()["game_build"]
-        except Exception:
-            self.close()
+        except Exception as startup_error:
+            try:
+                self.close()
+            except Exception as cleanup_error:
+                if isinstance(startup_error, NativeSimError):
+                    startup_error.details = {
+                        "startup": startup_error.details,
+                        "cleanup_error": str(cleanup_error),
+                    }
+                raise startup_error from cleanup_error
             raise
 
     def _start(self) -> None:
