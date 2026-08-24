@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "local://sts2-native-sim/legal-action.schema.json",
+  "title": "STS2 NativeSim legal action",
+  "type": "object",
+  "required": ["action_id", "kind", "parameters"],
+  "properties": {
+    "action_id": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["play_card", "end_turn", "use_potion", "discard_potion", "choose_cards", "choose_creature", "choose_option"] },
+    "parameters": { "type": "object" }
+  },
+  "additionalProperties": false
+}

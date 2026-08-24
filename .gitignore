@@ -1,0 +1,53 @@
+# User-owned game files and downloaded runtimes
+.tools/
+*.dll
+*.exe
+*.pck
+
+# Build and editor output
+**/bin/
+**/obj/
+**/.godot/
+.vs/
+.vscode/
+.idea/
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Research output and private/local data
+artifacts/
+models/
+data/
+datasets/
+runs/
+output/
+scratch/
+sessions/
+screenshots/
+community_runs/
+game_data/
+game_database/
+knowledge_database/
+*.jsonl
+*.jsonl.gz
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.save*
+*.log
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+config.local.*
+secrets.*

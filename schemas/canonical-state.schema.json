@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "local://sts2-native-sim/canonical-state.schema.json",
+  "title": "STS2 NativeSim observation v2 (non-certifying)",
+  "type": "object",
+  "required": ["schema_version", "game_build", "run", "combat", "inventory", "decision", "terminal", "victory"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "game_build": { "type": "object", "required": ["version", "assembly_sha256", "pck_sha256"] },
+    "run": { "type": "object", "required": ["seed", "ascension", "gold", "rng_counters"] },
+    "combat": { "type": "object", "required": ["turn", "phase", "energy", "max_energy", "creatures", "piles"] },
+    "inventory": { "type": "object", "required": ["relics", "potions"] },
+    "outstanding_choice": { "type": ["object", "null"] },
+    "decision": { "type": "object", "required": ["kind", "legal_actions"] },
+    "terminal": { "type": "boolean" },
+    "victory": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

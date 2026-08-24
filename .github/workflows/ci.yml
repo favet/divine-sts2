@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  source-and-core:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Install Python package
+        run: python -m pip install -e ".[dev]"
+      - name: Compile Python
+        run: python -m compileall -q python
+      - name: Build game-independent C# projects
+        shell: pwsh
+        run: |
+          dotnet build src/Sts2.NativeSim.Protocol/Sts2.NativeSim.Protocol.csproj -c Release --nologo
+          dotnet build src/Sts2.NativeSim.Core/Sts2.NativeSim.Core.csproj -c Release --nologo
+      - name: Scan public source tree
+        shell: pwsh
+        run: scripts/test-public-tree.ps1

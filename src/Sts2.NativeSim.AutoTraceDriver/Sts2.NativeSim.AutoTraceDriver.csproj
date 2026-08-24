@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>sts2-native-autotrace-driver</AssemblyName>
+    <RootNamespace>Sts2.NativeSim.AutoTraceDriver</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="sts2" HintPath="$(GameDataDir)\sts2.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(GameDataDir)\0Harmony.dll" Private="false" />
+    <Reference Include="GodotSharp" HintPath="$(GameDataDir)\GodotSharp.dll" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="sts2-native-autotrace-driver.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="PackageAutoTraceDriver" AfterTargets="Build">
+    <MakeDir Directories="$(OutputPath)package" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(OutputPath)package" />
+    <Copy SourceFiles="sts2-native-autotrace-driver.json" DestinationFolder="$(OutputPath)package" />
+  </Target>
+</Project>

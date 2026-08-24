@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "divine-sts2"
+version = "0.1.0"
+description = "Build-pinned, deterministic headless research tooling for Slay the Spire 2"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "divine-sts2 contributors" }]
+dependencies = ["psutil>=6.0"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+train = ["torch>=2.6"]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14"]
+
+[project.scripts]
+divine-sts2 = "sts2_native_sim.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["sts2_native_sim*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sts2.NativeSim.TraceExporter\Sts2.NativeSim.TraceExporter.csproj" />
+    <Reference Include="sts2" HintPath="$(GameDataDir)\sts2.dll" Private="true" />
+    <Reference Include="0Harmony" HintPath="$(GameDataDir)\0Harmony.dll" Private="true" />
+    <Reference Include="GodotSharp" HintPath="$(GameDataDir)\GodotSharp.dll" Private="true" />
+  </ItemGroup>
+</Project>

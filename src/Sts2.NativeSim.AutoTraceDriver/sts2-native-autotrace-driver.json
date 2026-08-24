@@ -1,0 +1,11 @@
+{
+  "id": "sts2-native-autotrace-driver",
+  "name": "STS2 Isolated Native AutoTrace Driver",
+  "author": "sts2-native-sim",
+  "description": "Opt-in headless one-combat driver using the shipped AutoSlayer policy for differential capture.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": true,
+  "dependencies": [{"id": "sts2-native-trace-exporter", "min_version": "0.1.0"}]
+}

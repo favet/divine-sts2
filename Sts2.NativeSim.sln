@@ -1,0 +1,58 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.Core", "src\Sts2.NativeSim.Core\Sts2.NativeSim.Core.csproj", "{6674B10C-6CA3-45AF-AC49-0A89B020F69C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.Protocol", "src\Sts2.NativeSim.Protocol\Sts2.NativeSim.Protocol.csproj", "{9F49DB2A-C294-46DE-A548-5CB2598B6069}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.Host", "src\Sts2.NativeSim.Host\Sts2.NativeSim.Host.csproj", "{092E22A9-C4D0-42A6-97C4-5B1AFEC9E112}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.GodotHost", "src\Sts2.NativeSim.GodotHost\Sts2.NativeSim.GodotHost.csproj", "{2CF84A41-EFA1-4B45-BF4E-2FD90013F8D1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.TraceExporter", "src\Sts2.NativeSim.TraceExporter\Sts2.NativeSim.TraceExporter.csproj", "{2A62CF9B-CC9D-48E4-BF74-5C0C59672B91}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.TraceExporterSmoke", "tests\Sts2.NativeSim.TraceExporterSmoke\Sts2.NativeSim.TraceExporterSmoke.csproj", "{B8247338-76A0-4642-8A08-32BD731D770B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2.NativeSim.FullAppBridge", "src\Sts2.NativeSim.FullAppBridge\Sts2.NativeSim.FullAppBridge.csproj", "{3E481A57-8C8B-48BE-9E45-84092EBE4112}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6674B10C-6CA3-45AF-AC49-0A89B020F69C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6674B10C-6CA3-45AF-AC49-0A89B020F69C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6674B10C-6CA3-45AF-AC49-0A89B020F69C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6674B10C-6CA3-45AF-AC49-0A89B020F69C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F49DB2A-C294-46DE-A548-5CB2598B6069}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F49DB2A-C294-46DE-A548-5CB2598B6069}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F49DB2A-C294-46DE-A548-5CB2598B6069}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F49DB2A-C294-46DE-A548-5CB2598B6069}.Release|Any CPU.Build.0 = Release|Any CPU
+		{092E22A9-C4D0-42A6-97C4-5B1AFEC9E112}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{092E22A9-C4D0-42A6-97C4-5B1AFEC9E112}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{092E22A9-C4D0-42A6-97C4-5B1AFEC9E112}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{092E22A9-C4D0-42A6-97C4-5B1AFEC9E112}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2CF84A41-EFA1-4B45-BF4E-2FD90013F8D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2CF84A41-EFA1-4B45-BF4E-2FD90013F8D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2CF84A41-EFA1-4B45-BF4E-2FD90013F8D1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2CF84A41-EFA1-4B45-BF4E-2FD90013F8D1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2A62CF9B-CC9D-48E4-BF74-5C0C59672B91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A62CF9B-CC9D-48E4-BF74-5C0C59672B91}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A62CF9B-CC9D-48E4-BF74-5C0C59672B91}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A62CF9B-CC9D-48E4-BF74-5C0C59672B91}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B8247338-76A0-4642-8A08-32BD731D770B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8247338-76A0-4642-8A08-32BD731D770B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8247338-76A0-4642-8A08-32BD731D770B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8247338-76A0-4642-8A08-32BD731D770B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3E481A57-8C8B-48BE-9E45-84092EBE4112}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3E481A57-8C8B-48BE-9E45-84092EBE4112}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3E481A57-8C8B-48BE-9E45-84092EBE4112}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3E481A57-8C8B-48BE-9E45-84092EBE4112}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

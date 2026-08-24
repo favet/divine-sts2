@@ -1,0 +1,23 @@
+; Minimal engine-hosted feasibility probe. It does not load or modify the installed game project.
+config_version=5
+
+config/features=PackedStringArray("4.5", "C#", "GL Compatibility")
+
+[application]
+
+config/name="STS2 Native Simulator Godot Host"
+run/main_scene="res://Main.tscn"
+
+[display]
+
+window/size/viewport_width=64
+window/size/viewport_height=64
+
+[dotnet]
+
+project/assembly_name="Sts2.NativeSim.GodotHost"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

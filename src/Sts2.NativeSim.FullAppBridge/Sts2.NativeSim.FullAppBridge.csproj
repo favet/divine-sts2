@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>sts2-full-app-bridge</AssemblyName>
+    <RootNamespace>Sts2.NativeSim.FullAppBridge</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="sts2" HintPath="$(GameDataDir)\sts2.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(GameDataDir)\0Harmony.dll" Private="false" />
+    <Reference Include="GodotSharp" HintPath="$(GameDataDir)\GodotSharp.dll" Private="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Sts2.NativeSim.Protocol\Sts2.NativeSim.Protocol.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="sts2-full-app-bridge.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="PackageFullAppBridge" AfterTargets="Build">
+    <MakeDir Directories="$(OutputPath)package" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(OutputPath)package" />
+    <Copy SourceFiles="$(OutputPath)Sts2.NativeSim.Protocol.dll" DestinationFolder="$(OutputPath)package" Condition="Exists('$(OutputPath)Sts2.NativeSim.Protocol.dll')" />
+    <Copy SourceFiles="sts2-full-app-bridge.json" DestinationFolder="$(OutputPath)package" />
+  </Target>
+</Project>

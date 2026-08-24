@@ -1,0 +1,10 @@
+{
+  "id": "sts2-full-app-bridge",
+  "name": "STS2 Full-Application Native Control Bridge",
+  "author": "sts2-native-sim",
+  "description": "External controllable IPC observation and decision bridge for headless full-application execution without synthetic reconstruction.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false
+}
