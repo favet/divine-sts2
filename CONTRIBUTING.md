@@ -6,10 +6,20 @@ separate claims, each backed by a reproducible artifact or command.
 
 ## Development setup
 
-1. Install Python 3.11+, the .NET 9 SDK, and a user-owned Steam copy of Slay the Spire 2.
-2. Run `pwsh scripts/bootstrap.ps1`.
-3. Run `divine-sts2 doctor --deep`.
-4. Run `pwsh scripts/test-public-tree.ps1` before submitting a pull request.
+Use the [README clean-clone acceptance](README.md#first-clean-clone-acceptance)
+as the source of truth:
+
+1. Install Python 3.11+, PowerShell 7, and a lawfully installed Steam copy of
+   Slay the Spire 2.
+2. Create and activate `.venv`; bootstrap supplies the pinned Godot/.NET tools.
+3. Run `pwsh scripts/bootstrap.ps1` and wait for deep doctor to pass.
+4. Run the one-worker smoke before any larger rollout or full-app acceptance.
+5. Before a pull request, run `python -m compileall -q python tests`,
+   `python -m pytest -q`, and `pwsh scripts/test-public-tree.ps1`.
+
+The public repository is source-first. Game files, private session data,
+community runs, training shards, and advisor tooling stay outside the public
+clone unless their redistribution, privacy, and provenance review is complete.
 
 Never commit game binaries/resources, local saves, datasets without documented
 redistribution permission, model checkpoints without model cards, or generated

@@ -5,35 +5,54 @@ Deterministic, build-pinned headless research tooling for Slay the Spire 2.
 divine-sts2 provides two complementary native execution backends:
 
 - A persistent Godot/.NET worker farm for high-throughput trajectory generation.
-- A full-application bridge for authoritative end-to-end acceptance and differential replay.
+- A full-application bridge for optional end-to-end acceptance and differential replay.
 
 Both execute mechanics from a compatible, user-owned game installation. This
 repository contains no game executable, assembly, resource pack, save, art,
 audio, decompiled source, dataset, or pretrained model.
 
-> **Research status:** the environment and rollout infrastructure are useful;
-> no holistic run policy is currently promoted. Simulator throughput, mechanical
+> **Research status:** the persistent native environment and rollout
+> infrastructure have a clean-clone smoke path. No holistic run policy is
+> currently promoted. The full-application bridge is an optional acceptance
+> path, not the first contributor smoke. Simulator throughput, mechanical
 > fidelity, and policy strength are independent claims.
+
+## Capability status at a glance
+
+| Capability | Public status | Required inputs |
+| :--- | :--- | :--- |
+| Persistent native worker | Supported smoke path | Compatible, user-owned game installation |
+| Persistent rollouts | Supported after the smoke | CPU/RAM; no public model is required for random smoke |
+| Full-application bridge | Optional acceptance path | Game-dependent build, sandbox, and game launch |
+| Training | Source-only; not runnable from a clean clone | Licensed JSONL shards plus CPU/CUDA Torch |
+| Promoted learned policy | Not available | Future outcome-labeled evidence and promotion gates |
+| Live advisor/private workspace | Not part of this package | Separate private tooling and provenance review |
 
 ## Current evidence
 
-On the development machine, the persistent farm has sustained approximately
-6,000–9,000 complete episodes/hour with 6–8 workers. RAM is the practical worker
-limit. The full-application bridge is slower and is intended for acceptance,
-not bulk collection. See [the rollout report](docs/native-rollout-farm.md) and
-[the evidence guide](docs/project-status-and-review-guide.md) for scope and caveats.
+The dated rollout report records **4,955 complete episodes/hour** on
+2026-08-23 with six workers and 100 A1 episodes, including a 17-second cold
+start. It recorded 98 valid terminal episodes and two presentation failures;
+the exact seeds were subsequently repaired and replayed. This is a
+development-machine measurement, not a clean-clone target. RAM is the practical
+worker limit. The full-application bridge is slower and is intended for
+acceptance, not bulk collection. See [the rollout report](docs/native-rollout-farm.md)
+and [the evidence guide](docs/project-status-and-review-guide.md) for scope and
+caveats.
 
 The current pinned evidence was collected on game build
-`0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`. The doctor reports hashes for
-the installed assembly and PCK. A mismatched build is unsupported until its
-acceptance suite passes.
+`0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`. The supported hashes are
+assembly `A1F9E653F1E28E4076558FEE1E60D218619CB7E057B887C6417F62C62C6D7A52`
+and PCK `42520EB8B0911C6C0F0BD102D92B33F41ABD4D26B83489817D0A6DBD7DD48587`.
+Deep doctor reports and enforces these fingerprints; a mismatched build is
+unsupported until its acceptance suite passes.
 
 ## Requirements
 
 - Windows 10/11
 - A lawfully installed Steam copy of Slay the Spire 2
 - Python 3.11+
-- .NET 9 SDK
+- Internet access and enough free disk space for the staged Godot/.NET tools
 - PowerShell 7
 - Godot 4.5.1 .NET, installed automatically by the bootstrap script
 - Optional NVIDIA CUDA GPU for training; native rollout workers remain CPU/RAM-bound
@@ -78,6 +97,10 @@ Expected smoke results are:
   `completed_episodes: 1`, `valid_terminal_episodes: 1`, `errors: 0`, and
   `worker_restarts: 0`.
 
+Here, a **valid terminal episode** means the native environment reached a
+terminal outcome without a worker error; it may be a death/defeat. `victories`
+is reported separately and is not required for this infrastructure smoke.
+
 After the one-worker smoke passes, run a small parallel sample:
 
 ```powershell
@@ -94,6 +117,24 @@ two-worker sample is clean.
 
 Rollout policy scripts require an explicitly supplied checkpoint and any
 optional macro/card datasets. None are silently downloaded or distributed.
+
+### Optional full-application acceptance
+
+This path launches the shipped game process and is not required for the first
+contributor smoke. Use it only after the persistent worker passes, in a
+lawfully installed game root, and expect sandbox/settings side effects and
+multiple game processes:
+
+```powershell
+$env:STS2_GAME_ROOT = 'C:\path\to\Slay the Spire 2'
+dotnet build src/Sts2.NativeSim.FullAppBridge/Sts2.NativeSim.FullAppBridge.csproj `
+  -c Release `
+  -p:GameDataDir="$env:STS2_GAME_ROOT\data_sts2_windows_x86_64"
+python python/full_app_bridge_acceptance.py --help
+```
+
+The acceptance harness is game-dependent and its historical benchmark reports
+must be rerun on the pinned build before being treated as current certification.
 
 ### If setup fails
 
@@ -115,6 +156,10 @@ Common corrections:
   the bootstrap output to the repository owner.
 
 ## Training on NVIDIA
+
+Training is source-only in this public repository; no public training shards
+are included. A clean clone cannot run the trainer below until licensed
+JSONL shards are supplied or generated and their provenance is documented.
 
 Install training dependencies and verify CUDA. The generic PyPI dependency may
 install a CPU-only Torch build; NVIDIA users must select a Torch wheel matching

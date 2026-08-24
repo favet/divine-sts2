@@ -5,16 +5,25 @@ Shipped build under test: **`0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`**
 
 This is the required starting point for architectural reviews. Its purpose is to keep useful outside criticism flowing without allowing proposals, old benchmark numbers, or one successful gate to be mistaken for current proof. Update this document whenever a milestone changes materially.
 
+Claims below may refer to private development evidence and are not automatically
+reproducible from the public clone. Treat the public README and rerunnable smoke
+commands as the boundary for current contributor-facing capability.
+
 ## Read the project on four independent axes
 
 | Axis | Current position | Promotion boundary |
 | :--- | :--- | :--- |
-| **Mechanical fidelity** | NativeSim executes shipped mechanics. The `full_application_native` Go/No-Go milestone is **PROVEN (GO)**: 4-6 independent headless shipped processes (`SlayTheSpire2.exe --headless`) maintain 100.0% bit-for-bit determinism across all steps with prefix replay, branching, and zero synthetic reconstruction. Exact differential replay evidence covers **152 traces**, 2,600+ checkpoints, all 5 characters, and encounters across hallway, elite, and boss tiers. | Exact differential replay on a declared, build-pinned coverage matrix. Global certification is false. |
+| **Mechanical fidelity** | NativeSim executes shipped mechanics. Historical full-application evidence reached a **PROVEN (GO)** milestone on its tested build, with independent headless shipped processes maintaining bit-for-bit determinism across the reported traces. That historical result is not blanket certification of every public build or boundary. | Exact differential replay on a declared, build-pinned coverage matrix. Global certification is false. |
 | **Execution breadth** | Full-app control covers combat, routes, events, rewards, shops, and rest sites, but the August 23 policy audit found three full-run bridge defects: card rewards could be silently discarded, rest selection crashed the process, and potion use could be a no-op or target the wrong side. Those paths are repaired and a deterministic Regent replay completed with real drafts, shop actions, and a state-changing potion use, with no socket error or no-progress transition. Multi-worker stress remains unproven after these repairs. | Every advertised boundary remains deterministic, fail-loud, and stress-tested. Breadth is not certification. |
 | **Policy quality** | **No run policy is promoted.** The v10 combat policy's 78.14% validation Top-1 is behavior-cloning accuracy against a weak handwritten collector, not win-rate evidence. The root trajectory corpus has 40,192 records with no positive terminal labels; 3,073 unchanged-state actions were identified. The prior densified “winning” corpus used derived rather than replayable seeds and stamped transitions positive without observed terminal victories, so it is quarantined. The v11 enemy-aware checkpoint had an empty enemy vocabulary and is preserved under `artifacts/failed_models`, never promoted. A corrected deterministic Regent replay died on floor 9 after five wins. | Fresh exact-seed, outcome-labeled data; untouched run-level gates; then statistically significant lift over fixed baselines. Top-1 imitation accuracy alone never promotes a policy. |
-| **Advisor product** | Production Live Co-Pilot fully upgraded: `evaluator.py`, `recommend_pick.py`, and `get_live_context.py` integrate empirical 42k tier database (`community_tier_stats.json`, 1,681 cards, 6,121 synergies) and pretrained Macro Prior (`v9_macro_prior_pretrained.pt`) with exact tier ranks, 100% normalized allocations, and < 150ms single-shot execution. | Exact legal-action/state alignment, fail-closed behavior, calibrated advice, version checks, and acceptable end-to-end latency. |
+| **Advisor product** | Private development tooling (`evaluator.py`, `recommend_pick.py`, and `get_live_context.py`) is not part of the public package. No public learned advisor is promoted; private datasets/checkpoints require separate provenance and privacy review. | Exact legal-action/state alignment, fail-closed behavior, calibrated advice, version checks, and acceptable end-to-end latency. |
 
-Phase 1 is now fundamentally grounded by the authoritative `full_application_native` headless bridge. Phase 2 has working data/model/search experiments ready for token-based v9 training using true native trajectories with exact label provenance. Phase 3 has run-environment and UI prototypes, not a trustworthy holistic advisor.
+Phase 1 has a historical `full_application_native` headless-bridge result on
+the pinned development build, but remains bounded by the exact differential
+coverage matrix rather than global certification. Phase 2 has working
+data/model/search experiments ready for token-based v9 training using true
+native trajectories with exact label provenance. Phase 3 has run-environment
+and UI prototypes, not a trustworthy holistic advisor.
 
 The active run-policy recovery sequence and quantitative gates are in `docs/a1-policy-recovery-plan.md`.
 

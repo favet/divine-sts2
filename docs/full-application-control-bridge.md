@@ -1,12 +1,19 @@
 # STS2 Full-Application Native Control Bridge Specification & Architecture Report
 
+> **Evidence status:** This is a dated development report, not current public
+> release certification. Re-run the harness on the supported build before
+> treating the GO/PROVEN language or benchmark numbers below as current.
+
 ## 1. Executive Summary & Architecture Verdict
 
-- **Milestone Verdict**: **GO (PROVEN)**
+- **Historical milestone verdict**: **GO (PROVEN)**
 - **Architecture**: `full_application_native` (`SlayTheSpire2.exe --headless --force-steam=off` + isolated C# control mod + external TCP IPC bridge).
-- **Core Outcome**: Proved that the shipped, unmodified `SlayTheSpire2.exe` binary serves as the authoritative, controllable headless environment without synthetic mid-combat state reconstruction, synthetic resets, or handcrafted lifecycle reimplementation.
+- **Historical outcome**: On the tested build, the shipped, unmodified
+  `SlayTheSpire2.exe` binary served as the authoritative, controllable headless
+  environment without synthetic mid-combat state reconstruction, synthetic
+  resets, or handcrafted lifecycle reimplementation.
 
-### Benchmark Highlights (4 Concurrent Headless Shipped Processes)
+### Historical benchmark highlights (4 concurrent headless shipped processes)
 - **State Hash Equality**: **100.0%** bit-for-bit determinism across all 4 independent OS processes across all sequential action steps.
 - **Prefix Replay & Branching**: Verified 100% prefix match followed by clean counterfactual state divergence on branching actions (`play_card:0` vs `play_card:1:target:1`).
 - **Synthetic State Reconstruction**: **0%** (zero synthetic resets or state injection).
