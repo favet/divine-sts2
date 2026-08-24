@@ -17,18 +17,26 @@ audio, decompiled source, dataset, or pretrained model.
 > path, not the first contributor smoke. Simulator throughput, mechanical
 > fidelity, and policy strength are independent claims.
 
-## Capability status at a glance
+## What matters for this handoff
 
-| Capability | Public status | Required inputs |
+If you already have the game and the normal Windows development tools, follow
+only [Quick start](#quick-start) and [First clean-clone acceptance](#first-clean-clone-acceptance).
+The first useful result is a passing doctor plus one valid terminal episode.
+You do not need private workspace access, training data, a checkpoint, or the
+full-application bridge for this check.
+
+| Your goal | Status | What to do |
 | :--- | :--- | :--- |
-| Persistent native worker | Supported smoke path | Compatible, user-owned game installation |
-| Persistent rollouts | Supported after the smoke | CPU/RAM; no public model is required for random smoke |
-| Full-application bridge | Optional acceptance path | Game-dependent build, sandbox, and game launch |
-| Training | Source-only; not runnable from a clean clone | Licensed JSONL shards plus CPU/CUDA Torch |
-| Promoted learned policy | Not available | Future outcome-labeled evidence and promotion gates |
-| Live advisor/private workspace | Not part of this package | Separate private tooling and provenance review |
+| Validate the public clone | Ready now | Run Quick start, then the one-worker smoke |
+| Generate random native episodes | Ready after the smoke | Run the two-worker sample below |
+| Work on the full-application bridge | Separate advanced path | Ask the owner after the persistent smoke passes |
+| Train or promote a policy | Not part of this handoff | Wait for a separately documented data/training task |
+| Work on the live advisor/private workspace | Separate private work | Use the private-repository onboarding, not this clone |
 
-## Current evidence
+## Background evidence (not a setup requirement)
+
+Skip this section on the first pass. It records dated development measurements
+for reviewers; it does not change the one-worker handoff.
 
 The dated rollout report records **4,955 complete episodes/hour** on
 2026-08-23 with six workers and 100 A1 episodes, including a 17-second cold
@@ -41,21 +49,24 @@ and [the evidence guide](docs/project-status-and-review-guide.md) for scope and
 caveats.
 
 The current pinned evidence was collected on game build
-`0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`. The supported hashes are
-assembly `A1F9E653F1E28E4076558FEE1E60D218619CB7E057B887C6417F62C62C6D7A52`
-and PCK `42520EB8B0911C6C0F0BD102D92B33F41ABD4D26B83489817D0A6DBD7DD48587`.
-Deep doctor reports and enforces these fingerprints; a mismatched build is
-unsupported until its acceptance suite passes.
+`0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`. Deep doctor reports and
+enforces the supported fingerprints; a mismatched build is unsupported until
+its acceptance suite passes.
 
-## Requirements
+<details>
+<summary>Fingerprint values (for diagnosing an unsupported-build result)</summary>
 
-- Windows 10/11
-- A lawfully installed Steam copy of Slay the Spire 2
-- Python 3.11+
-- Internet access and enough free disk space for the staged Godot/.NET tools
-- PowerShell 7
-- Godot 4.5.1 .NET, installed automatically by the bootstrap script
-- Optional NVIDIA CUDA GPU for training; native rollout workers remain CPU/RAM-bound
+- Assembly SHA-256: `A1F9E653F1E28E4076558FEE1E60D218619CB7E057B887C6417F62C62C6D7A52`
+- PCK SHA-256: `42520EB8B0911C6C0F0BD102D92B33F41ABD4D26B83489817D0A6DBD7DD48587`
+
+</details>
+
+## Assumed setup
+
+The host tools and lawfully installed game are assumed to be ready. The first
+bootstrap only downloads repo-local Godot/.NET tools and installs this package
+into the active virtual environment, so allow internet access and enough free
+disk space for that step.
 
 ## Quick start
 
@@ -113,17 +124,15 @@ python python/native_rollout_farm.py `
 ```
 
 For a larger throughput sample, use 100 episodes and 4 workers only after the
-two-worker sample is clean.
+two-worker sample is clean. The commands above use the built-in random smoke
+path; policy scripts are separate and require an explicitly supplied
+checkpoint and datasets.
 
-Rollout policy scripts require an explicitly supplied checkpoint and any
-optional macro/card datasets. None are silently downloaded or distributed.
+### Later: full-application acceptance (owner-directed)
 
-### Optional full-application acceptance
-
-This path launches the shipped game process and is not required for the first
-contributor smoke. Use it only after the persistent worker passes, in a
-lawfully installed game root, and expect sandbox/settings side effects and
-multiple game processes:
+Do not run this for the first handoff. It launches the shipped game process and
+should be used only after the persistent worker passes, with owner direction.
+Expect sandbox/settings side effects and multiple game processes:
 
 ```powershell
 $env:STS2_GAME_ROOT = 'C:\path\to\Slay the Spire 2'
@@ -155,46 +164,11 @@ Common corrections:
 - A failed deep doctor: do not run rollouts; send the JSON doctor output and
   the bootstrap output to the repository owner.
 
-## Training on NVIDIA
+## Out of scope for this handoff
 
-Training is source-only in this public repository; no public training shards
-are included. A clean clone cannot run the trainer below until licensed
-JSONL shards are supplied or generated and their provenance is documented.
-
-Install training dependencies and verify CUDA. The generic PyPI dependency may
-install a CPU-only Torch build; NVIDIA users must select a Torch wheel matching
-their CUDA driver before running the command below:
-
-```powershell
-pwsh scripts/bootstrap.ps1 -Train
-python -c "import torch; print(torch.__version__, torch.cuda.is_available()); raise SystemExit(0 if torch.cuda.is_available() else 1)"
-```
-
-To force a CUDA wheel, pass the official index selected for the friend’s driver
-and CUDA runtime, for example `-TorchIndexUrl
-https://download.pytorch.org/whl/cu124`. Use the current command from the
-[official PyTorch installer](https://pytorch.org/get-started/locally/) if that
-CUDA line has changed.
-
-Simulation is CPU/RAM-bound; an NVIDIA GPU is needed only for the optional
-training path. Verify `torch.cuda.is_available()` before using `--device cuda`.
-If it is false, the installer selected CPU Torch and training should stop until
-the correct official CUDA index is used.
-
-The complete-state V12 trainer supports CUDA, mixed precision, pinned-memory
-loading, and episode-grouped validation:
-
-```powershell
-python python/train_v12_combat_policy.py `
-  --shards artifacts/training/*.jsonl.gz `
-  --output models/v12-candidate.pt `
-  --device cuda `
-  --amp `
-  --workers 4
-```
-
-Checkpoints are candidates until they improve held-out native run results on
-identical seeds and pass the documented promotion gates.
+Training and policy promotion are separate owner-directed work. No public
+training shards, checkpoint, or promoted policy are included, and none is
+needed for the contributor smoke or random rollout sample.
 
 ## Repository map
 
@@ -256,6 +230,9 @@ Do not request game binaries, save files, screenshots, private session data, or
 unreviewed community runs. Add a collaborator to any private repository only
 after the public one-worker smoke succeeds and only for work that genuinely
 requires private material.
+
+For this handoff, stop after sending the doctor output and smoke summary. The
+owner will provide the next task or the private-repository instructions.
 
 ## Legal
 
