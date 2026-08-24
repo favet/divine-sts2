@@ -19,3 +19,4 @@ $binaries = Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
 }
 if ($binaries) { throw "Forbidden distributable binaries found:`n$($binaries.FullName -join "`n")" }
 Write-Host 'Public-tree checks passed.'
+exit 0
