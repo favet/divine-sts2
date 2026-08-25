@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="..\..\src\Sts2.NativeSim.Core\Sts2.NativeSim.Core.csproj" /></ItemGroup></Project>

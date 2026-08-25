@@ -11,6 +11,9 @@
   <ItemGroup>
     <None Include="sts2-native-trace-exporter.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Sts2.NativeSim.Core\ReflectionTools.cs" Link="ReflectionTools.cs" />
+  </ItemGroup>
   <Target Name="PackageTraceExporter" AfterTargets="Build">
     <MakeDir Directories="$(OutputPath)package" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(OutputPath)package" />

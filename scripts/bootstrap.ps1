@@ -1,10 +1,12 @@
-param([switch]$Train, [string]$TorchIndexUrl = '')
+param([switch]$Train, [string]$TorchIndexUrl = '', [switch]$WithGodot)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $root = Get-DivineRepositoryRoot
 & (Join-Path $PSScriptRoot 'install-dotnet-9.ps1') | Out-Host
-& (Join-Path $PSScriptRoot 'install-godot-4.5.1.ps1') | Out-Host
+if ($WithGodot) {
+    & (Join-Path $PSScriptRoot 'install-godot-4.5.1.ps1') | Out-Host
+}
 $bundledDotnet = Join-Path $root '.tools\dotnet9'
 $env:DOTNET_ROOT = $bundledDotnet
 $env:DOTNET_ROOT_X64 = $bundledDotnet

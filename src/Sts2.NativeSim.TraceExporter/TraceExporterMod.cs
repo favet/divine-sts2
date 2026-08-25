@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Runs;
+using Sts2.NativeSim.Core;
 
 namespace Sts2.NativeSim.TraceExporter;
 
@@ -433,8 +434,8 @@ internal static class NativeTraceExporter
         return new
         {
             version = FileVersionInfo.GetVersionInfo(assemblyPath).ProductVersion ?? "unknown",
-            assembly_sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assemblyPath))),
-            pck_sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(pckPath)))
+            assembly_sha256 = ReflectionTools.HashFile(assemblyPath),
+            pck_sha256 = ReflectionTools.HashFile(pckPath)
         };
     }
 

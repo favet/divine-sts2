@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <GameDataDir Condition="'$(GameDataDir)' == ''">F:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64</GameDataDir>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Sts2.NativeSim.TraceExporter\Sts2.NativeSim.TraceExporter.csproj" />

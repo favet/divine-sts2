@@ -35,6 +35,9 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     private int _choiceOrdinal;
     private ResetRequest? _reset;
     private readonly List<string> _history = [];
+    private string? _currentBranchHandle;
+    private string? _lastActionId;
+    private bool _isPoisoned;
     private string _hash = "";
     private bool _runServicesInitialized;
     private bool _mapMode;
@@ -67,10 +70,11 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
 
     public PersistentNativeCombatEnvironment(string assemblyPath, string pckPath)
     {
-        _activeEnvironment = this;
+        if (Interlocked.CompareExchange(ref _activeEnvironment, this, null) is not null)
+            throw new InvalidOperationException("PersistentNativeCombatEnvironment is a process singleton; an active instance already exists.");
         assemblyPath = Path.GetFullPath(assemblyPath);
-        _assemblyHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assemblyPath)));
-        _pckHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(pckPath)));
+        _assemblyHash = ReflectionTools.HashFile(assemblyPath);
+        _pckHash = ReflectionTools.HashFile(pckPath);
         _productVersion = FileVersionInfo.GetVersionInfo(assemblyPath).ProductVersion ?? "unknown";
         _context = new(assemblyPath);
         InitializeOnce();
@@ -149,55 +153,67 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
 
     public EnvironmentResult Reset(ResetRequest request)
     {
-        if (_pendingChoice is not null) CancelPendingChoice();
-        _runMode = false; _runStage = "map"; _runWon = false; _roomRewardsSet = null; _resolvedRoomRewards.Clear(); _pendingRoomRewardIndex = null; _pendingRewardsSet = null; _pendingRewardSelection = null; _customRewardMode = false; _customRewardsLinked = false; _customRewardKinds = []; _treasureRoom = null; _treasureSynchronizer = null; _treasureOpened = false; _treasureResolved = false; _merchantRoom = null; _merchantInventory = null; _merchantEntryIdentities.Clear(); _mapMode = false; _rewardMode = false; _rewardKind = "card"; _rewardModelId = null; _cardReward = null; _restMode = false; _eventMode = false; _eventId = null; _event = null; Validate(request); _reset = request; _history.Clear(); Construct(request);
+        ThrowIfPoisoned();
+        QuiesceOutstandingTransition();
+        _runMode = false; _runStage = "map"; _runWon = false; _roomRewardsSet = null; _resolvedRoomRewards.Clear(); _pendingRoomRewardIndex = null; _pendingRewardsSet = null; _pendingRewardSelection = null; _customRewardMode = false; _customRewardsLinked = false; _customRewardKinds = []; _treasureRoom = null; _treasureSynchronizer = null; _treasureOpened = false; _treasureResolved = false; _merchantRoom = null; _merchantInventory = null; _merchantEntryIdentities.Clear(); _mapMode = false; _rewardMode = false; _rewardKind = "card"; _rewardModelId = null; _cardReward = null; _restMode = false; _eventMode = false; _eventId = null; _event = null; Validate(request); _reset = request; _history.Clear(); _currentBranchHandle = null; _lastActionId = null; Construct(request);
         return Capture(new { kind = "reset", replayed_actions = 0 });
     }
     public EnvironmentResult RunReset(ResetRequest request)
     {
-        Reset(request); _history.Clear(); _runMode = true; _runStage = "map"; InitializeRunMap();
+        ThrowIfPoisoned();
+        Reset(request); _runMode = true; _runStage = "map"; InitializeRunMap();
         return Capture(new { kind = "run_reset", replayed_actions = 0 });
     }
     public EnvironmentResult MapReset(ResetRequest request)
     {
-        Reset(request); _history.Clear(); _mapMode = true; InitializeMap();
+        ThrowIfPoisoned();
+        Reset(request); _mapMode = true; InitializeMap();
         return Capture(new { kind = "map_reset", replayed_actions = 0 });
     }
     public EnvironmentResult RewardReset(ResetRequest request)
     {
-        Reset(request); _history.Clear(); _rewardMode = true; _rewardKind = "card"; _rewardModelId = null; InitializeReward();
+        ThrowIfPoisoned();
+        Reset(request); _rewardMode = true; _rewardKind = "card"; _rewardModelId = null; InitializeReward();
         return Capture(new { kind = "reward_reset", replayed_actions = 0 });
     }
     public EnvironmentResult ItemRewardReset(ItemRewardResetRequest request)
     {
+        ThrowIfPoisoned();
         if (request.RewardKind is not ("relic" or "potion")) throw new ProtocolException("invalid_reward_kind", request.RewardKind);
-        Reset(request.State); _history.Clear(); _rewardMode = true; _rewardKind = request.RewardKind; _rewardModelId = request.ModelId; InitializeReward();
+        Reset(request.State); _rewardMode = true; _rewardKind = request.RewardKind; _rewardModelId = request.ModelId; InitializeReward();
         return Capture(new { kind = "item_reward_reset", reward_kind = _rewardKind, model_id = _rewardModelId, replayed_actions = 0 });
     }
     public async Task<EnvironmentResult> CustomRewardResetAsync(CustomRewardResetRequest request)
     {
-        Reset(request.State); _history.Clear(); _customRewardMode = true; _customRewardsLinked = request.Linked; _customRewardKinds = request.RewardKinds.ToArray();
+        ThrowIfPoisoned();
+        Reset(request.State); _customRewardMode = true; _customRewardsLinked = request.Linked; _customRewardKinds = request.RewardKinds.ToArray();
         await InitializeCustomRewardsAsync();
         return Capture(new { kind = "custom_reward_reset", linked = _customRewardsLinked, replayed_actions = 0 });
     }
     public EnvironmentResult RestReset(ResetRequest request)
     {
-        Reset(request); _history.Clear(); _restMode = true; InitializeRestSite();
+        ThrowIfPoisoned();
+        Reset(request); _restMode = true; InitializeRestSite();
         return Capture(new { kind = "rest_reset", replayed_actions = 0 });
     }
     public async Task<EnvironmentResult> EventResetAsync(EventResetRequest request)
     {
-        Reset(request.State); _history.Clear(); _eventMode = true; _eventId = request.EventId; await InitializeEventAsync();
+        ThrowIfPoisoned();
+        Reset(request.State); _eventMode = true; _eventId = request.EventId; await InitializeEventAsync();
         return Capture(new { kind = "event_reset", event_id = _eventId, replayed_actions = 0 });
     }
-    public EnvironmentResult Observe() => Capture(null);
-    public IReadOnlyList<LegalAction> LegalActions() => BuildActions();
+    public EnvironmentResult Observe() { ThrowIfPoisoned(); return Capture(null); }
+    public IReadOnlyList<LegalAction> LegalActions() { ThrowIfPoisoned(); return BuildActions(); }
 
     public async Task<EnvironmentResult> StepAsync(string actionId, bool record = true)
     {
+        ThrowIfPoisoned();
         Stopwatch timer = Stopwatch.StartNew();
+        // Validate legality before assigning _lastActionId so that a rejected
+        // action never contaminates the branch edge recorded by GetOrAddCurrentBranch().
         LegalAction action = BuildActions().SingleOrDefault(x => x.ActionId == actionId)
             ?? throw new ProtocolException("invalid_action", $"Action '{actionId}' is not legal in state {_hash}.");
+        _lastActionId = actionId;
         if (action.Kind == "play_card")
             await StartTransitionAsync(() => PlayAsync(Convert.ToUInt32(action.Parameters["card_id"]), action.Parameters["target_id"] is null ? null : Convert.ToUInt32(action.Parameters["target_id"])));
         else if (action.Kind == "end_turn") await StartTransitionAsync(EndTurnAsync);
@@ -230,7 +246,17 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         else throw new ProtocolException("unsupported_action", action.Kind);
         if (record) _history.Add(actionId);
         timer.Stop();
-        return Capture(new { kind = action.Kind, action_id = actionId, elapsed_ms = timer.Elapsed.TotalMilliseconds, history_length = _history.Count });
+        // Capture consumes _lastActionId as the transition edge label.  Clear it
+        // immediately after so that a subsequent Observe() or Fork() cannot
+        // replay the same edge and spawn a redundant child branch node.
+        try
+        {
+            return Capture(new { kind = action.Kind, action_id = actionId, elapsed_ms = timer.Elapsed.TotalMilliseconds, history_length = _history.Count });
+        }
+        finally
+        {
+            _lastActionId = null;
+        }
     }
 
     public string Fork() => GetOrAddCurrentBranch();
@@ -238,11 +264,16 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
 
     public async Task<EnvironmentResult> RestoreAsync(string id)
     {
+        ThrowIfPoisoned();
         if (!_branches.TryGetValue(id, out Branch? branch)) throw new ProtocolException("unknown_state_handle", id);
-        if (StringComparer.Ordinal.Equals(_hash, branch.ExpectedHash) && _history.SequenceEqual(branch.History, StringComparer.Ordinal))
+        List<string> branchHistory = ResolveBranchHistory(branch);
+        if (StringComparer.Ordinal.Equals(_hash, branch.ExpectedHash) && _history.SequenceEqual(branchHistory, StringComparer.Ordinal))
+        {
+            _currentBranchHandle = id;
             return Capture(new { kind = "restore", replayed_actions = 0, resident_prefix_hit = true, elapsed_ms = 0.0 });
-        CancelPendingChoice();
-        Stopwatch timer = Stopwatch.StartNew(); _reset = branch.Reset; _history.Clear(); Construct(branch.Reset); _runMode = branch.RunMode; _runStage = "map"; _pendingRewardsSet = null; _pendingRewardSelection = null;
+        }
+        QuiesceOutstandingTransition();
+        Stopwatch timer = Stopwatch.StartNew(); _reset = branch.Reset; _history.Clear(); _currentBranchHandle = null; _lastActionId = null; Construct(branch.Reset); _runMode = branch.RunMode; _runStage = "map"; _pendingRewardsSet = null; _pendingRewardSelection = null;
         _mapMode = !_runMode && branch.MapMode; _rewardMode = !_runMode && branch.RewardMode; _rewardKind = branch.RewardKind; _rewardModelId = branch.RewardModelId; _restMode = !_runMode && branch.RestMode; _eventMode = !_runMode && branch.EventMode; _eventId = branch.EventId;
         _customRewardMode = branch.CustomRewardMode; _customRewardsLinked = branch.CustomRewardsLinked; _customRewardKinds = branch.CustomRewardKinds;
         if (_runMode) InitializeRunMap();
@@ -251,11 +282,12 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         if (_restMode) InitializeRestSite();
         if (_eventMode) await InitializeEventAsync();
         if (_customRewardMode) await InitializeCustomRewardsAsync();
-        foreach (string action in branch.History) { await StepAsync(action, false); _history.Add(action); }
+        foreach (string action in branchHistory) { await StepAsync(action, false); _history.Add(action); }
+        _currentBranchHandle = id;
         EnvironmentResult result = Capture(null);
         if (!StringComparer.Ordinal.Equals(result.StateHash, branch.ExpectedHash))
-            throw new ProtocolException("replay_divergence", $"Expected {branch.ExpectedHash}, obtained {result.StateHash}.", new { history_length = branch.History.Length });
-        timer.Stop(); return result with { Transition = new { kind = "restore", replayed_actions = branch.History.Length, elapsed_ms = timer.Elapsed.TotalMilliseconds } };
+            throw new ProtocolException("replay_divergence", $"Expected {branch.ExpectedHash}, obtained {result.StateHash}.", new { history_length = branchHistory.Count });
+        timer.Stop(); return result with { Transition = new { kind = "restore", replayed_actions = branchHistory.Count, elapsed_ms = timer.Elapsed.TotalMilliseconds } };
     }
 
     private void InitializeOnce()
@@ -543,6 +575,33 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         if (ReflectionTools.Invoke(action, "ExecuteAction") is Task task) await task.ConfigureAwait(false);
     }
 
+    private object TransitionKernelSnapshot() => new
+    {
+        run_mode = _runMode,
+        run_stage = _runStage,
+        map_mode = _mapMode,
+        reward_mode = _rewardMode,
+        reward_kind = _rewardKind,
+        reward_model_id = _rewardModelId,
+        rest_mode = _restMode,
+        event_mode = _eventMode,
+        event_id = _eventId,
+        custom_reward_mode = _customRewardMode,
+        custom_rewards_linked = _customRewardsLinked,
+        custom_reward_kinds = _customRewardKinds
+    };
+
+    private string ComputeStateHash(object observation)
+    {
+        object hashPayload = new
+        {
+            hash_schema_version = 3,
+            observation,
+            kernel = TransitionKernelSnapshot()
+        };
+        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(hashPayload)));
+    }
+
     private EnvironmentResult Capture(object? transition)
     {
         if (_runMode && _runStage != "combat" && _runStage != "run_terminal" && !PlayerAlive())
@@ -577,17 +636,19 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             ["creatures"] = creatures,
             ["piles"] = piles
         };
-        if (_reset!.CaptureOrbs)
+        if (_reset!.CaptureOrbs || ReflectionTools.Get(_pcs!, "OrbQueue") is not null)
         {
-            object queue = ReflectionTools.Get(_pcs!, "OrbQueue")!;
-            combatObservation["orbs"] = new
+            if (ReflectionTools.Get(_pcs!, "OrbQueue") is { } queue)
             {
-                capacity = ReflectionTools.Get(queue, "Capacity"),
-                entries = ReflectionTools.Enumerate(ReflectionTools.Get(queue, "Orbs")).Where(orb => orb is not null).Select(orb => new
+                combatObservation["orbs"] = new
                 {
-                    model_id = Entry(orb!), passive = ReflectionTools.Get(orb!, "PassiveVal"), evoke = ReflectionTools.Get(orb!, "EvokeVal"), native_state = SavedNativeState(orb!)
-                }).ToArray()
-            };
+                    capacity = ReflectionTools.Get(queue, "Capacity"),
+                    entries = ReflectionTools.Enumerate(ReflectionTools.Get(queue, "Orbs")).Where(orb => orb is not null).Select(orb => new
+                    {
+                        model_id = Entry(orb!), passive = ReflectionTools.Get(orb!, "PassiveVal"), evoke = ReflectionTools.Get(orb!, "EvokeVal"), native_state = SavedNativeState(orb!)
+                    }).ToArray()
+                };
+            }
         }
         object observation = new
         {
@@ -598,7 +659,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             outstanding_choice = choiceState,
             decision = new { kind = terminal ? "terminal" : _pendingChoice is null ? "combat_action" : _pendingChoice.DecisionKind, legal_actions = actions }, terminal, victory = terminal && playerAlive
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, terminal, terminal && playerAlive, handle, transition, ScoringFeatures());
     }
 
@@ -816,7 +877,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = actions.Length == 0 ? "map_terminal" : "map_choice", legal_actions = actions },
             terminal = actions.Length == 0, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, actions.Length == 0, false, handle, transition, ScoringFeatures());
     }
 
@@ -834,7 +895,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             terminal = false,
             victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation)));
+        _hash = ComputeStateHash(observation);
         string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
@@ -852,7 +913,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             terminal = true,
             victory = _runWon
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation)));
+        _hash = ComputeStateHash(observation);
         string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, [], true, _runWon, handle, transition, ScoringFeatures());
     }
@@ -951,7 +1012,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = _pendingChoice is not null ? _pendingChoice.DecisionKind : actions.Length == 0 ? "reward_complete" : "reward_choice", legal_actions = actions },
             terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1011,7 +1072,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = _pendingRewardsSet is not null ? "custom_reward_choice" : _pendingChoice is not null ? _pendingChoice.DecisionKind : _restSelectionStarted ? "rest_complete" : "rest_choice", legal_actions = actions },
             terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1135,7 +1196,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = _pendingRewardsSet is not null ? "custom_reward_choice" : _pendingChoice is not null ? _pendingChoice.DecisionKind : finished ? "event_complete" : "event_choice", legal_actions = actions },
             terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1188,34 +1249,31 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         object reward = rewards[rewardIndex];
         if (optionIndex < 0)
         {
-            ReflectionTools.Invoke(reward, "OnSkipped");
             _resolvedRoomRewards.Add(rewardIndex);
+            ReflectionTools.Invoke(reward, "OnSkipped");
             return;
         }
-        try
+        if (reward.GetType().Name == "CardReward")
         {
-            if (reward.GetType().Name == "CardReward") _rewardSelectionIndex = optionIndex;
+            _rewardSelectionIndex = optionIndex;
             _pendingRoomRewardIndex = rewardIndex;
-            await StartTransitionAsync(() => (Task)ReflectionTools.Invoke(reward, "SelectUnsynchronized")!);
-            if (_pendingChoice is null && (bool)ReflectionTools.Get(reward, "SuccessfullySelected")!) { _resolvedRoomRewards.Add(rewardIndex); _pendingRoomRewardIndex = null; }
+            await StartTransitionAsync(() => (Task)ReflectionTools.Invoke(reward, "SelectLocalOption", optionIndex, _player!)!);
         }
-        finally { _rewardSelectionIndex = null; }
+        else
+        {
+            object synchronizer = ReflectionTools.Get(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!, "RewardsSetSynchronizer")!;
+            _pendingRoomRewardIndex = rewardIndex;
+            await StartTransitionAsync(() => (Task)ReflectionTools.Invoke(synchronizer, "SelectLocalReward", reward)!);
+        }
     }
 
     private async Task LeaveRoomRewardsAsync()
     {
         if (_roomRewardsSet is null) throw new ProtocolException("invalid_action", "No native room rewards are active.");
-        object[] rewards = ReflectionTools.Enumerate(ReflectionTools.Get(_roomRewardsSet, "Rewards")).Where(reward => reward is not null).Select(reward => reward!).ToArray();
-        for (int index = 0; index < rewards.Length; index++)
-        {
-            if (_resolvedRoomRewards.Contains(index) || (bool)ReflectionTools.Get(rewards[index], "SuccessfullySelected")!) continue;
-            ReflectionTools.Invoke(rewards[index], "OnSkipped");
-            _resolvedRoomRewards.Add(index);
-        }
         object runManager = ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!;
-        int roomCount = Convert.ToInt32(ReflectionTools.Get(_run!, "CurrentRoomCount"));
+        bool resumesEvent = ReflectionTools.Enumerate(ReflectionTools.Get(_run!, "Rooms")).Count > 1;
+        int roomCount = ReflectionTools.Enumerate(ReflectionTools.Get(_run!, "Rooms")).Count;
         object? currentRoom = ReflectionTools.Get(_run!, "CurrentRoom");
-        bool resumesEvent = roomCount > 1 && currentRoom is not null && currentRoom.GetType().Name == "CombatRoom" && (bool)ReflectionTools.Get(currentRoom, "ShouldResumeParentEventAfterCombat")!;
         if (resumesEvent)
         {
             if (ReflectionTools.Invoke(runManager, "ProceedFromTerminalRewardsScreen") is Task proceed) await proceed.ConfigureAwait(false);
@@ -1225,10 +1283,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         }
         else if (currentRoom is not null && IsActEndingBoss(currentRoom))
         {
-            // The shipped rewards screen routes a terminal boss reward through
-            // ActChangeSynchronizer rather than opening the current map. Preserve
-            // the boss room until the explicit advance_act decision so the final
-            // Act can enter its native victory event.
             _runStage = "act_transition";
         }
         else
@@ -1248,8 +1302,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         object? currentCoord = ReflectionTools.Get(_run!, "CurrentMapCoord");
         object? firstBoss = ReflectionTools.Get(map, "BossMapPoint");
         object? firstBossCoord = firstBoss is null ? null : ReflectionTools.Get(firstBoss, "coord");
-        // At A10, the first boss leads to a second native boss map point. Only
-        // the second boss is an act-ending transition.
         return currentCoord is null || firstBossCoord is null || !currentCoord.Equals(firstBossCoord);
     }
 
@@ -1264,9 +1316,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         _restMode = false; _eventMode = false; _event = null; _eventId = null;
         if (priorAct < actCount - 1)
         {
-            // RunManager.EnterAct ends by constructing NMapRoom and dereferencing
-            // NRun.Instance, a presentation node intentionally absent here. Invoke
-            // the same shipped state-bearing sequence and omit only that UI room.
             if (ReflectionTools.Invoke(runManager, "ExitCurrentRooms") is Task exit) await exit.ConfigureAwait(false);
             if (ReflectionTools.Invoke(runManager, "SetActInternal", priorAct + 1) is Task setAct) await setAct.ConfigureAwait(false);
             if (ReflectionTools.InvokeStatic(T("MegaCrit.Sts2.Core.Hooks.Hook"), "AfterActEntered", _run!) is Task hook) await hook.ConfigureAwait(false);
@@ -1287,10 +1336,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             object enteredEvent = ReflectionTools.Get(victoryRoom, "LocalMutableEvent")!;
             if (!ReflectionTools.Enumerate(ReflectionTools.Get(enteredEvent, "CurrentOptions")).Any())
             {
-                // The Architect clears its initial option until a speech bubble is
-                // attached to NCombatRoom. With no presentation tree there is no
-                // speaker node, so restore the already-generated current-line
-                // option without rerolling dialogue or changing run state.
                 object option = ReflectionTools.Invoke(enteredEvent, "CreateOptionForCurrentLine")!;
                 object description = ReflectionTools.GetStatic(enteredEvent.GetType(), "_emptyLocString")!;
                 object options = List(T("MegaCrit.Sts2.Core.Events.EventOption"), [option]);
@@ -1372,7 +1417,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = !_treasureOpened ? "treasure_open" : _treasureResolved ? "treasure_complete" : "treasure_relic_choice", legal_actions = actions },
             terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1413,9 +1458,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         Task purchase = (Task)ReflectionTools.Invoke(entry, "OnTryPurchaseWrapper", _merchantInventory, false, true)!;
         await purchase;
         bool success = Convert.ToBoolean(ReflectionTools.Get(purchase, "Result"));
-        // The shipped wrapper normally reaches this through NMerchantRoom UI.
-        // The room node is deliberately absent headlessly, so mirror only its
-        // successful inventory bookkeeping after native gold/card hooks finish.
         if (success) ReflectionTools.Invoke(entry, "SetUsed");
     }
 
@@ -1435,7 +1477,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             run = RunInventorySnapshot(deck), shop = new { entries }, outstanding_choice = _pendingChoice?.Snapshot(), outstanding_rewards = CustomRewardsSnapshot(),
             decision = new { kind = _pendingRewardsSet is not null ? "custom_reward_choice" : _pendingChoice is null ? "shop_choice" : _pendingChoice.DecisionKind, legal_actions = actions }, terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1578,7 +1620,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             decision = new { kind = _pendingChoice is not null ? _pendingChoice.DecisionKind : _pendingRewardsSet is not null ? "custom_reward_choice" : "custom_reward_complete", legal_actions = actions },
             terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1702,7 +1744,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             room_rewards = new { rewards },
             decision = new { kind = "room_reward_choice", legal_actions = actions }, terminal = false, victory = false
         };
-        _hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(observation))); string handle = GetOrAddCurrentBranch();
+        _hash = ComputeStateHash(observation); string handle = GetOrAddCurrentBranch();
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
@@ -1930,18 +1972,18 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         P(saveManager.GetMethod("UpdateProgressAfterCombatWon", BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipVoid));
         P(saveManager.GetMethod("SaveProgressFile", BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipVoid));
         P(T("MegaCrit.Sts2.Core.Models.Monsters.DecimillipedeSegment").GetMethod("AnimSegmentsAttack", BindingFlags.NonPublic | BindingFlags.Instance)!, nameof(SkipTask));
-        Type sandpit = T("MegaCrit.Sts2.Core.Models.Powers.SandpitPower");
-        foreach (string methodName in new[] { "AfterApplied", "AfterPowerAmountChanged" })
-            P(sandpit.GetMethod(methodName, BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipTask));
-        P(sandpit.GetMethod("UpdateCreaturePositions", BindingFlags.NonPublic | BindingFlags.Instance)!, nameof(SkipTask));
+        // SandpitPower.AfterApplied, AfterPowerAmountChanged, and UpdateCreaturePositions are
+        // gameplay state-bearing lifecycle hooks (they reposition creatures and trigger native
+        // power effects). They must not be suppressed in the persistent environment.
+        // Crusher.BeforeDeath and Rocket.BeforeDeath / AfterCurrentHpChanged are shipped
+        // combat-outcome hooks; removing them would change the native death/reward path.
+        // SoulNexus.AfterDeath is a state transition hook.
+        // The Background property accessors on Crusher and Rocket return a presentation-only
+        // scene node that is never written to game state; those are safe to stub.
         Type crusher = T("MegaCrit.Sts2.Core.Models.Monsters.Crusher");
         P(crusher.GetProperty("Background", BindingFlags.NonPublic | BindingFlags.Instance)!.GetMethod!, nameof(ReturnUninitializedPresentationObject));
-        P(crusher.GetMethod("BeforeDeath", BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipTask));
         Type rocket = T("MegaCrit.Sts2.Core.Models.Monsters.Rocket");
         P(rocket.GetProperty("Background", BindingFlags.NonPublic | BindingFlags.Instance)!.GetMethod!, nameof(ReturnUninitializedPresentationObject));
-        P(rocket.GetMethod("BeforeDeath", BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipTask));
-        P(rocket.GetMethod("AfterCurrentHpChanged", BindingFlags.Public | BindingFlags.Instance)!, nameof(SkipTask));
-        P(T("MegaCrit.Sts2.Core.Models.Monsters.SoulNexus").GetMethod("AfterDeath", BindingFlags.NonPublic | BindingFlags.Instance)!, nameof(SkipVoid));
         Type crabBackground = T("MegaCrit.Sts2.Core.Nodes.Vfx.Backgrounds.NKaiserCrabBossBackground");
         foreach (MethodInfo m in crabBackground.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Where(x => x.Name.StartsWith("Play", StringComparison.Ordinal)))
         {
@@ -2268,13 +2310,64 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         return result;
     }
 
-    private void CancelPendingChoice()
+    private void QuiesceOutstandingTransition()
     {
-        if (_pendingChoice is null) return;
-        _pendingChoice.Cancel(); _pendingChoice = null;
-        _continuationTask?.ContinueWith(task => _ = task.Exception, TaskContinuationOptions.OnlyOnFaulted);
-        _continuationTask = null; _choiceBegun = null;
+        Task? continuation = _continuationTask;
+        PendingNativeChoice? choice = _pendingChoice;
+        _pendingChoice = null;
+        _choiceBegun = null;
+
+        if (continuation is not null && !continuation.IsCompleted)
+        {
+            if (choice is null)
+            {
+                _isPoisoned = true;
+                throw new ProtocolException("unsafe_transition_abandon", "A native continuation task is running without an outstanding cancellable choice.");
+            }
+
+            choice.Cancel();
+            try
+            {
+                if (!continuation.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    _isPoisoned = true;
+                    throw new ProtocolException("unsafe_transition_abandon", "Suspended native continuation task did not unwind within 5 seconds.");
+                }
+            }
+            catch (Exception ex) when (IsCancellationException(ex))
+            {
+                // Cancellation/unwinding exceptions are expected when canceling a choice.
+            }
+            catch
+            {
+                _isPoisoned = true;
+                throw;
+            }
+            finally
+            {
+                _continuationTask = null;
+            }
+        }
+        else
+        {
+            choice?.Cancel();
+            _continuationTask = null;
+        }
     }
+
+    private void ThrowIfPoisoned()
+    {
+        if (_isPoisoned)
+            throw new ProtocolException("worker_poisoned", "Worker state is corrupted and must be reconstructed. Discard and replace this worker.");
+    }
+
+    private static bool IsCancellationException(Exception ex) => ex switch
+    {
+        // TaskCanceledException is a subtype of OperationCanceledException; covered by the first arm.
+        OperationCanceledException => true,
+        AggregateException agg => agg.InnerExceptions.All(inner => inner is OperationCanceledException),
+        _ => false
+    };
     private static void ValidateSelection(string[] optionIds, string[] selectedIds, int min, int max)
     {
         if (selectedIds.Distinct(StringComparer.Ordinal).Count() != selectedIds.Length || selectedIds.Length < min || selectedIds.Length > max || selectedIds.Any(id => !optionIds.Contains(id, StringComparer.Ordinal)))
@@ -2285,16 +2378,67 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     private string GetOrAddCurrentBranch()
     {
         EnsureReset();
-        string payload = JsonSerializer.Serialize(new { reset = _reset, history = _history, expected_hash = _hash, run_mode = _runMode, map_mode = _mapMode, reward_mode = _rewardMode, reward_kind = _rewardKind, reward_model_id = _rewardModelId, rest_mode = _restMode, event_mode = _eventMode, event_id = _eventId, custom_reward_mode = _customRewardMode, custom_reward_kinds = _customRewardKinds, custom_rewards_linked = _customRewardsLinked });
+
+        // Passive-observe idempotency fast path: if no action edge is pending
+        // (_lastActionId == null) and the worker already has a branch handle that
+        // records the current hash, refresh its LRU position and return it directly
+        // without computing the SHA-256 payload or spawning a new child node.
+        // This guarantees that 1,000 consecutive Observe() or Fork() calls on an
+        // unchanged worker leave branch_count strictly at 1.
+        if (_lastActionId is null && _currentBranchHandle is not null &&
+            _branches.TryGetValue(_currentBranchHandle, out Branch? resident) &&
+            StringComparer.Ordinal.Equals(resident.ExpectedHash, _hash))
+        {
+            _branchOrder.Remove(_currentBranchHandle);
+            _branchOrder.AddLast(_currentBranchHandle);
+            return _currentBranchHandle;
+        }
+
+        string payload = JsonSerializer.Serialize(new
+        {
+            parent = _currentBranchHandle,
+            action_id = _lastActionId,
+            expected_hash = _hash,
+            reset = _reset,
+            kernel = TransitionKernelSnapshot()
+        });
         string id = "s:" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload)));
-        if (_branches.ContainsKey(id))
+        // Fast path: if the current branch handle already maps to exactly this
+        // payload (same parent, same action edge, same hash, same kernel), return
+        // immediately.  This prevents repeated Observe() or Fork() calls after a
+        // Step from spawning redundant child branch entries for the same transition.
+        if (_currentBranchHandle == id)
+            return id;
+        if (_branches.TryGetValue(id, out Branch? existing))
         {
             _branchOrder.Remove(id);
             _branchOrder.AddLast(id);
+            _currentBranchHandle = id;
             return id;
         }
-        _branches[id] = new(_reset!, _history.ToArray(), _hash, _runMode, _mapMode, _rewardMode, _rewardKind, _rewardModelId, _restMode, _eventMode, _eventId, _customRewardMode, _customRewardKinds.ToArray(), _customRewardsLinked);
+        // Store the complete action history on the branch at creation so it is
+        // self-contained.  ResolveBranchHistory() reads this directly and is
+        // therefore immune to ancestor eviction regardless of LRU order.
+        string[] history = _history.ToArray();
+        _branches[id] = new(
+            _currentBranchHandle,
+            _lastActionId,
+            _hash,
+            _reset!,
+            history,
+            _runMode,
+            _mapMode,
+            _rewardMode,
+            _rewardKind,
+            _rewardModelId,
+            _restMode,
+            _eventMode,
+            _eventId,
+            _customRewardMode,
+            _customRewardKinds,
+            _customRewardsLinked);
         _branchOrder.AddLast(id);
+        _currentBranchHandle = id;
         while (_branches.Count > BranchCapacity && _branchOrder.First is { } oldest)
         {
             _branchOrder.RemoveFirst();
@@ -2302,8 +2446,45 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         }
         return id;
     }
-    public void Dispose() { CancelPendingChoice(); if (ReferenceEquals(_activeEnvironment, this)) _activeEnvironment = null; _selectorScope?.Dispose(); _context.Dispose(); }
-    private sealed record Branch(ResetRequest Reset, string[] History, string ExpectedHash, bool RunMode, bool MapMode, bool RewardMode, string RewardKind, string? RewardModelId, bool RestMode, bool EventMode, string? EventId, bool CustomRewardMode, string[] CustomRewardKinds, bool CustomRewardsLinked);
+
+    private static List<string> ResolveBranchHistory(Branch leaf)
+    {
+        // History is stored directly on the Branch record at creation time, so
+        // resolution is an O(1) array copy that is immune to ancestor eviction.
+        return [.. leaf.History];
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            QuiesceOutstandingTransition();
+        }
+        finally
+        {
+            if (ReferenceEquals(_activeEnvironment, this))
+                _activeEnvironment = null;
+            _selectorScope?.Dispose();
+            _context.Dispose();
+        }
+    }
+    private sealed record Branch(
+        string? ParentHandle,
+        string? ActionId,
+        string ExpectedHash,
+        ResetRequest Reset,
+        string[] History,
+        bool RunMode,
+        bool MapMode,
+        bool RewardMode,
+        string RewardKind,
+        string? RewardModelId,
+        bool RestMode,
+        bool EventMode,
+        string? EventId,
+        bool CustomRewardMode,
+        string[] CustomRewardKinds,
+        bool CustomRewardsLinked);
     private sealed record PendingRewardSelection(object TopReward, object SelectedReward, Task OfferTask, bool IsLinked);
     private sealed class PendingNativeChoice(
         string choiceId,

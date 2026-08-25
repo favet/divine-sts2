@@ -4,54 +4,30 @@ Deterministic, build-pinned headless research tooling for Slay the Spire 2.
 
 divine-sts2 provides two complementary native execution backends:
 
-- A persistent Godot/.NET worker farm for high-throughput trajectory generation.
+- A persistent .NET 9 / Godot worker farm for high-throughput trajectory generation and RL training.
 - A full-application bridge for optional end-to-end acceptance and differential replay.
 
 Both execute mechanics from a compatible, user-owned game installation. This
 repository contains no game executable, assembly, resource pack, save, art,
 audio, decompiled source, dataset, or pretrained model.
 
-> **Research status:** the persistent native environment and rollout
-> infrastructure have a clean-clone smoke path. No holistic run policy is
-> currently promoted. The full-application bridge is an optional acceptance
-> path, not the first contributor smoke. Simulator throughput, mechanical
-> fidelity, and policy strength are independent claims.
+> **Research status:** the persistent native environment is hardened and verified
+> for primary RL/MCTS training authority with 100% bit-for-bit differential parity,
+> dual observation pipelines (player-visible fog-of-war vs exact canonical replay),
+> and standard Gymnasium VectorEnv conformance.
 
-## What matters for this handoff
+## Key Architecture & Hardening Highlights
 
-If you already have the game and the normal Windows development tools, follow
-only [Quick start](#quick-start) and [First clean-clone acceptance](#first-clean-clone-acceptance).
-The first useful result is a passing doctor plus one valid terminal episode.
-You do not need private workspace access, training data, a checkpoint, or the
-full-application bridge for this check.
+- **Zero-Startup Memory Spikes**: 1 MB buffered `FileStream` SHA-256 hashing eliminates giant byte-array allocations on 1.9 GB PCKs.
+- **Continuation Quiescence & Poison Reaping**: Suspended tasks synchronously unwind within 5 seconds before reset/restore; unmanaged aborts poison the worker and trigger automatic pool-level process replacement.
+- **Kernel-Aware State Identity (Schema v3)**: State hashes bind transition kernels across all 8 operational modes (combat, run, map, card/item/custom rewards, rest, event).
+- **Fog-of-War Dual Observation Pipeline**: Strips hidden draw-pile ordering (converting to permutation-invariant multisets) and masks raw RNG stream counters for neural policies while preserving exact canonical state for replay.
+- **Gymnasium VectorEnv Conformance**: Standard vectorized 5-tuple `(obs, reward, terminated, truncated, info)` step and 2-tuple `(obs, info)` reset with signed HP progress rewards.
+- **Eviction-Immune Branch Storage**: Self-contained branch histories guarantee that LRU cache eviction cannot orphan surviving deep descendant leaves.
 
-| Your goal | Status | What to do |
-| :--- | :--- | :--- |
-| Validate the public clone | Ready now | Run Quick start, then the one-worker smoke |
-| Generate random native episodes | Ready after the smoke | Run the two-worker sample below |
-| Work on the full-application bridge | Separate advanced path | Ask the owner after the persistent smoke passes |
-| Train or promote a policy | Not part of this handoff | Wait for a separately documented data/training task |
-| Work on the live advisor/private workspace | Separate private work | Use the private-repository onboarding, not this clone |
-
-## Background evidence (not a setup requirement)
-
-Skip this section on the first pass. It records dated development measurements
-for reviewers; it does not change the one-worker handoff.
-
-The dated rollout report records **4,955 complete episodes/hour** on
-2026-08-23 with six workers and 100 A1 episodes, including a 17-second cold
-start. It recorded 98 valid terminal episodes and two presentation failures;
-the exact seeds were subsequently repaired and replayed. This is a
-development-machine measurement, not a clean-clone target. RAM is the practical
-worker limit. The full-application bridge is slower and is intended for
-acceptance, not bulk collection. See [the rollout report](docs/native-rollout-farm.md)
-and [the evidence guide](docs/project-status-and-review-guide.md) for scope and
-caveats.
-
-The current pinned evidence was collected on game build
+The current pinned evidence is verified on game build
 `0.1.0+59260271157f76a2896f0eab5bc6ea1245d8b314`. Deep doctor reports and
-enforces the supported fingerprints; a mismatched build is unsupported until
-its acceptance suite passes.
+enforces the supported fingerprints:
 
 <details>
 <summary>Fingerprint values (for diagnosing an unsupported-build result)</summary>

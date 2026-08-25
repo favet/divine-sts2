@@ -16,6 +16,7 @@ public static class PresentationSuppression
 
         NonInteractiveMode.AutoSlayerCheck = () => true;
 
+        // Strictly patch leaf presentation sinks (audio, visual effects, speech bubbles, camera animations)
         TryPatchAllMethods(harmony, typeof(MegaCrit.Sts2.Core.Commands.VfxCmd));
         TryPatchAllMethods(harmony, typeof(MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager));
         TryPatchAllMethods(harmony, typeof(MegaCrit.Sts2.Core.Commands.SfxCmd));
@@ -23,10 +24,6 @@ public static class PresentationSuppression
 
         TryPatchVoid(harmony, typeof(CreatureCmd), "TriggerAnim");
         TryPatchVoid(harmony, typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NNormalMapPoint), "SetAngle");
-        TryPatchVoid(harmony, typeof(MegaCrit.Sts2.Core.Commands.CardPileCmd), "Draw");
-        TryPatchVoid(harmony, typeof(MegaCrit.Sts2.Core.Commands.CardPileCmd), "Add");
-        TryPatchVoid(harmony, typeof(MegaCrit.Sts2.Core.Commands.CardPileCmd), "Discard");
-        TryPatchVoid(harmony, typeof(MegaCrit.Sts2.Core.Commands.CardPileCmd), "Exhaust");
 
         try
         {

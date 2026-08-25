@@ -1,10 +1,18 @@
 """Policy-facing native branch expansion over isolated persistent workers."""
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from typing import Any
 
 from .client import NativeWorkerPool
+
+
+def _branch_identity(branch: dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
+    reset_request = branch.get("reset_request") or {}
+    history = tuple(branch.get("history") or ())
+    expected_hash = str(branch.get("expected_hash") or "")
+    return (json.dumps(reset_request, sort_keys=True, separators=(",", ":")), history, expected_hash)
 
 
 class NativeSearchCoordinator:
@@ -94,9 +102,9 @@ class NativeSearchCoordinator:
         root_score = float(scorer(root_state))
         frontier = [{"branch": root_branch, "state": root_state, "path": [], "score": root_score, "ordinal": 0}]
         best = None
-        seen = {root_state["state_hash"]}
+        seen = {_branch_identity(root_branch)}
         nodes = 0
-        transposition_hits = 0
+        duplicate_branch_hits = 0
         ordinal = 1
         depth_reached = 0
         try:
@@ -112,13 +120,14 @@ class NativeSearchCoordinator:
                     for expansion in self._expand_branch(node["branch"], legal_ids):
                         nodes += 1
                         child = expansion["state"]
-                        child_hash = child["state_hash"]
-                        if child_hash in seen:
-                            transposition_hits += 1
+                        child_branch = expansion["branch"]
+                        branch_id = _branch_identity(child_branch)
+                        if branch_id in seen:
+                            duplicate_branch_hits += 1
                             continue
-                        seen.add(child_hash)
+                        seen.add(branch_id)
                         candidate = {
-                            "branch": expansion["branch"],
+                            "branch": child_branch,
                             "state": child,
                             "path": node["path"] + [expansion["action"]["action_id"]],
                             "score": float(scorer(child)),
@@ -144,9 +153,10 @@ class NativeSearchCoordinator:
                 "best_decision": selected["state"]["observation"]["decision"]["kind"],
                 "nodes_evaluated": nodes,
                 "unique_states": len(seen),
-                "transposition_hits": transposition_hits,
+                "duplicate_branch_hits": duplicate_branch_hits,
                 "depth_reached": depth_reached,
                 "budgets": {"max_depth": max_depth, "node_budget": node_budget, "beam_width": beam_width},
             }
         finally:
             self.pool.restore_portable(source_worker_index, root_branch)
+

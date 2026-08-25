@@ -69,7 +69,7 @@ def combat_sample(row: dict[str, Any], weight: float, result: float) -> dict[str
         creature for creature in combat.get("creatures") or []
         if str(creature.get("side", "")).lower() == "enemy"
     ]
-    target_slots = {int(creature.get("combat_id", -1)): index + 1 for index, creature in enumerate(enemy_creatures)}
+    target_slots = {int(creature.get("combat_id") or (index + 1)): index + 1 for index, creature in enumerate(enemy_creatures)}
     legal_actions = []
     for action in native_actions:
         params = action.get("parameters") or {}
@@ -77,12 +77,14 @@ def combat_sample(row: dict[str, Any], weight: float, result: float) -> dict[str
         card = by_instance.get(params.get("instance_id"), {})
         option_ids = params.get("option_ids") or []
         choice_card_id = choice_options.get(option_ids[0]) if len(option_ids) == 1 else None
+        target_id_raw = params.get("target_id")
+        target_id_val = int(target_id_raw) if target_id_raw is not None else 0
         legal_actions.append({
             "action_id": action.get("action_id"),
             "action_type": "play_card" if kind in {"choose_cards", "choose_option"} else kind,
             "metadata": {
                 "card_id": choice_card_id or card.get("model_id") or params.get("model_id", ""),
-                "target_id": target_slots.get(int(params.get("target_id") or -1), 0),
+                "target_id": target_slots.get(target_id_val, target_id_val),
             },
         })
     enemies = []

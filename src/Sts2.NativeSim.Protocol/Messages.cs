@@ -40,7 +40,7 @@ public sealed record ResetRequest(
     [property: JsonPropertyName("enemies")] IReadOnlyList<EnemySpec>? Enemies = null,
     [property: JsonPropertyName("initial_draw_pile")] IReadOnlyList<string>? InitialDrawPile = null,
     [property: JsonPropertyName("invoke_combat_entry_hooks")] bool InvokeCombatEntryHooks = false,
-    [property: JsonPropertyName("capture_orbs")] bool CaptureOrbs = false,
+    [property: JsonPropertyName("capture_orbs")] bool CaptureOrbs = true,
     [property: JsonPropertyName("use_character_starting_loadout")] bool UseCharacterStartingLoadout = false);
 public sealed record StepRequest([property: JsonPropertyName("action_id")] string ActionId);
 public sealed record EventResetRequest(

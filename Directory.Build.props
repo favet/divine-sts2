@@ -7,5 +7,6 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <GameDataDir Condition="'$(GameDataDir)' == '' and '$(STS2_GAME_ROOT)' != ''">$(STS2_GAME_ROOT)\data_sts2_windows_x86_64</GameDataDir>
+    <GameDataDir Condition="'$(GameDataDir)' == ''">F:\SteamLibrary\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64</GameDataDir>
   </PropertyGroup>
 </Project>

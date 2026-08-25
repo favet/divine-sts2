@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .paths import DiscoveryError, REPOSITORY_ROOT, find_game_assembly, find_game_root, find_godot
+from .paths import DiscoveryError, REPOSITORY_ROOT, find_dotnet, find_game_assembly, find_game_root, find_godot, find_host_assembly
 
 SUPPORTED_BUILD = {
     "assembly_sha256": "A1F9E653F1E28E4076558FEE1E60D218619CB7E057B887C6417F62C62C6D7A52",
@@ -57,12 +57,17 @@ def doctor(deep: bool = False) -> dict[str, Any]:
         checks["cuda_available"] = False
         checks["cuda_device"] = None
     failures: list[str] = []
-    for name, discover in (("game_root", find_game_root), ("game_assembly", find_game_assembly), ("godot", find_godot)):
+    for name, discover in (("game_root", find_game_root), ("game_assembly", find_game_assembly), ("host_assembly", find_host_assembly)):
         try:
             checks[name] = str(discover())
         except DiscoveryError as error:
             checks[name] = None
             failures.append(str(error))
+
+    try:
+        checks["godot"] = str(find_godot())
+    except DiscoveryError:
+        checks["godot"] = None
 
     if deep and not failures:
         assembly = Path(checks["game_assembly"])

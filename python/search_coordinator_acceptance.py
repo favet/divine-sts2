@@ -36,6 +36,8 @@ def main() -> None:
         assert worker.observe()["state_hash"] == root_hash
         legacy_rejected = False
         legacy = Path(__file__).resolve().parents[1] / "models" / "set_transformer_ranked.pt"
+        if not legacy.exists():
+            legacy = Path(__file__).resolve().parents[2] / "models" / "set_transformer_ranked.pt"
         try:
             NativeTorchValueScorer.load(legacy, state["observation"]["game_build"])
         except ValueError:

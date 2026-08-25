@@ -26,7 +26,7 @@ public sealed class NativeFeasibilityProbe
     {
         string fullPath = Path.GetFullPath(assemblyPath);
         FileInfo file = new(fullPath);
-        string sha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(fullPath)));
+        string sha256 = ReflectionTools.HashFile(fullPath);
         string productVersion = FileVersionInfo.GetVersionInfo(fullPath).ProductVersion ?? "unknown";
 
         RunStage("load_assembly", () =>

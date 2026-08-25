@@ -51,6 +51,14 @@ class NativeSimError(RuntimeError):
 
 def _defaults() -> tuple[Path, Path, Path]:
     project = REPOSITORY_ROOT / "src" / "Sts2.NativeSim.GodotHost"
+    if not project.exists():
+        project = REPOSITORY_ROOT / "divine-sts2" / "src" / "Sts2.NativeSim.GodotHost"
+    if not project.exists():
+        project = REPOSITORY_ROOT / "native_sim" / "src" / "Sts2.NativeSim.GodotHost"
+    if not project.exists():
+        project = REPOSITORY_ROOT.parent / "divine-sts2" / "src" / "Sts2.NativeSim.GodotHost"
+    if not project.exists():
+        project = REPOSITORY_ROOT.parent / "native_sim" / "src" / "Sts2.NativeSim.GodotHost"
     return find_godot(), project, find_game_assembly()
 
 
@@ -96,10 +104,13 @@ class NativeWorker:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         environment = os.environ.copy()
         dotnet_root = REPOSITORY_ROOT / ".tools" / "dotnet9"
+        if not dotnet_root.is_dir():
+            dotnet_root = REPOSITORY_ROOT.parent / ".tools" / "dotnet9"
         if dotnet_root.is_dir():
             environment["DOTNET_ROOT"] = str(dotnet_root)
             environment["DOTNET_ROOT_X64"] = str(dotnet_root)
             environment["PATH"] = str(dotnet_root) + os.pathsep + environment.get("PATH", "")
+            environment["DOTNET_ROLL_FORWARD"] = "Major"
         self.process = _spawn_without_windows_error_dialogs(
             self.command,
             stdin=subprocess.PIPE,
@@ -127,6 +138,22 @@ class NativeWorker:
         for line in self.process.stderr:
             self._logs.append(line.rstrip())
 
+    def _reap_process(self) -> None:
+        try:
+            self.process.kill()
+        except Exception:
+            pass
+        try:
+            self.process.wait(timeout=5)
+        except Exception:
+            pass
+        for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if pipe is not None and not pipe.closed:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
     def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         with self._lock:
             if self.process.poll() is not None:
@@ -139,7 +166,7 @@ class NativeWorker:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    self.process.kill()
+                    self._reap_process()
                     raise NativeSimError(
                         "request_timeout",
                         f"{method} did not respond within {self.request_timeout:.1f} seconds",
@@ -148,7 +175,7 @@ class NativeWorker:
                 try:
                     line = self._stdout_lines.get(timeout=remaining)
                 except queue.Empty:
-                    self.process.kill()
+                    self._reap_process()
                     raise NativeSimError(
                         "request_timeout",
                         f"{method} did not respond within {self.request_timeout:.1f} seconds",
@@ -161,11 +188,21 @@ class NativeWorker:
                 except json.JSONDecodeError:  # Godot's engine banner is not protocol output.
                     self._logs.append(line.rstrip())
                     continue
-                if response.get("id") != request_id:
+                if not isinstance(response, dict) or "id" not in response:
                     continue
+                if response["id"] != request_id:
+                    self._reap_process()
+                    raise NativeSimError(
+                        "protocol_desync",
+                        f"Response ID mismatch: expected '{request_id}', got '{response['id']}'",
+                        {"expected_id": request_id, "actual_id": response["id"], "logs": list(self._logs)},
+                    )
                 if not response.get("ok"):
                     error = response.get("error") or {}
-                    raise NativeSimError(error.get("code", "unknown"), error.get("message", "unknown error"), error.get("details"))
+                    code = error.get("code", "unknown")
+                    if code in {"worker_poisoned", "unsafe_transition_abandon", "replay_divergence", "protocol_desync"}:
+                        self._reap_process()
+                    raise NativeSimError(code, error.get("message", "unknown error"), error.get("details"))
                 return response.get("result")
 
     def hello(self) -> dict[str, Any]: return self.request("hello")
@@ -201,6 +238,9 @@ class NativeWorker:
         self._reset_request = {"method": method, "params": copy.deepcopy(params)}
         self._reset_state = copy.deepcopy(state); self._history = []; self._remember_handle(result["state_handle"])
     def observe(self) -> dict[str, Any]: return self.request("observe")
+    def observe_agent(self) -> dict[str, Any]:
+        from .observations import extract_agent_observation
+        return extract_agent_observation(self.observe())
     def run_observe(self) -> dict[str, Any]: return self.request("run_observe")
     def map_observe(self) -> dict[str, Any]: return self.request("map_observe")
     def reward_observe(self) -> dict[str, Any]: return self.request("reward_observe")
@@ -233,14 +273,16 @@ class NativeWorker:
     def fork(self) -> str:
         handle = self.request("fork")["state_handle"]; self._remember_handle(handle); return handle
     def restore(self, state_handle: str) -> dict[str, Any]:
+        if state_handle not in self._handle_histories:
+            raise NativeSimError("unknown_local_handle_history", f"State handle '{state_handle}' was evicted or not known locally.")
         result = self.request("restore", {"state_handle": state_handle})
-        if state_handle in self._handle_histories: self._history = list(self._handle_histories[state_handle])
+        self._history = list(self._handle_histories[state_handle])
         self._remember_handle(result["state_handle"])
         return result
 
     def _remember_handle(self, handle: str) -> None:
         self._handle_histories[handle] = list(self._history); self._handle_histories.move_to_end(handle)
-        while len(self._handle_histories) > 512: self._handle_histories.popitem(last=False)
+        while len(self._handle_histories) > 8192: self._handle_histories.popitem(last=False)
 
     def export_branch(self) -> dict[str, Any]:
         if self._reset_state is None or self._reset_request is None: raise NativeSimError("not_reset", "Call reset before exporting a branch")
@@ -294,6 +336,7 @@ class NativeWorkerPool:
     def __init__(self, workers: int = 4, **worker_options: Any):
         self.worker_options = worker_options
         self.workers = [NativeWorker(**worker_options) for _ in range(workers)]
+        self._executor = ThreadPoolExecutor(max_workers=workers)
 
     def _replace_if_dead(self, index: int) -> NativeWorker:
         if self.workers[index].process.poll() is not None:
@@ -302,10 +345,10 @@ class NativeWorkerPool:
 
     def map(self, operation: Callable[[NativeWorker, Any], Any], values: Iterable[Any]) -> list[Any]:
         values = list(values)
-        if len(values) > len(self.workers): raise ValueError("one concurrent operation per worker is supported")
-        with ThreadPoolExecutor(max_workers=len(values)) as executor:
-            futures = [executor.submit(operation, self._replace_if_dead(i), value) for i, value in enumerate(values)]
-            return [f.result() for f in futures]
+        if len(values) > len(self.workers):
+            raise ValueError("one concurrent operation per worker is supported")
+        futures = [self._executor.submit(operation, self._replace_if_dead(i), value) for i, value in enumerate(values)]
+        return [f.result() for f in futures]
 
     def reset_all(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return self.map(lambda worker, value: worker.reset(value), [state] * len(self.workers))
@@ -323,11 +366,15 @@ class NativeWorkerPool:
         return result
 
     def close(self) -> None:
+        self._executor.shutdown(wait=True, cancel_futures=True)
         failures: list[Exception] = []
         for worker in self.workers:
-            try: worker.close()
-            except Exception as error: failures.append(error)
-        if failures: raise NativeSimError("pool_unclean_exit", f"{len(failures)} worker(s) failed clean shutdown", [str(error) for error in failures])
+            try:
+                worker.close()
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise NativeSimError("pool_unclean_exit", f"{len(failures)} worker(s) failed clean shutdown", [str(error) for error in failures])
 
     def __enter__(self) -> "NativeWorkerPool": return self
     def __exit__(self, *_: object) -> None: self.close()

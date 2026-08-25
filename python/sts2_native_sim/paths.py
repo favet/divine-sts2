@@ -80,6 +80,53 @@ def find_game_assembly(explicit: str | Path | None = None) -> Path:
     return candidate
 
 
+def find_dotnet(explicit: str | Path | None = None) -> Path:
+    override = explicit or os.environ.get("DOTNET")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
+        raise DiscoveryError(f"Dotnet executable not found: {candidate}")
+
+    exe_name = "dotnet.exe" if os.name == "nt" else "dotnet"
+    candidates = [
+        REPOSITORY_ROOT / ".tools" / "dotnet9" / exe_name,
+        REPOSITORY_ROOT.parent / ".tools" / "dotnet9" / exe_name,
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c.resolve()
+
+    resolved = shutil.which("dotnet")
+    if resolved:
+        return Path(resolved).resolve()
+    raise DiscoveryError(".NET 9 SDK was not found. Run scripts/install-dotnet-9.ps1 or set DOTNET.")
+
+
+def find_host_assembly(explicit: str | Path | None = None) -> Path:
+    override = explicit or os.environ.get("STS2_NATIVE_HOST")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
+        raise DiscoveryError(f"Host assembly not found: {candidate}")
+
+    release_dll = REPOSITORY_ROOT / "src" / "Sts2.NativeSim.Host" / "bin" / "Release" / "net9.0" / "Sts2.NativeSim.Host.dll"
+    if release_dll.is_file():
+        return release_dll.resolve()
+
+    debug_dll = REPOSITORY_ROOT / "src" / "Sts2.NativeSim.Host" / "bin" / "Debug" / "net9.0" / "Sts2.NativeSim.Host.dll"
+    if debug_dll.is_file():
+        return debug_dll.resolve()
+
+    # Also check for .exe
+    release_exe = REPOSITORY_ROOT / "src" / "Sts2.NativeSim.Host" / "bin" / "Release" / "net9.0" / "Sts2.NativeSim.Host.exe"
+    if release_exe.is_file():
+        return release_exe.resolve()
+
+    raise DiscoveryError("Sts2.NativeSim.Host was not built. Run scripts/build-persistent-server.ps1 or dotnet build.")
+
+
 def find_godot(explicit: str | Path | None = None) -> Path:
     override = explicit or os.environ.get("GODOT")
     if override:
@@ -88,21 +135,25 @@ def find_godot(explicit: str | Path | None = None) -> Path:
             return candidate
         raise DiscoveryError(f"Godot executable not found: {candidate}")
 
-    tool_root = REPOSITORY_ROOT / ".tools" / "godot-4.5.1-mono"
+    tool_roots = [
+        REPOSITORY_ROOT / ".tools" / "godot-4.5.1-mono",
+        REPOSITORY_ROOT.parent / ".tools" / "godot-4.5.1-mono",
+    ]
     names = (
         "Godot_v4.5.1-stable_mono_win64_console.exe",
         "Godot_v4.5.1-stable_mono_win64.exe",
     )
-    if tool_root.exists():
-        for name in names:
-            match = next(tool_root.rglob(name), None)
-            if match:
-                return match.resolve()
+    for tool_root in tool_roots:
+        if tool_root.exists():
+            for name in names:
+                match = next(tool_root.rglob(name), None)
+                if match:
+                    return match.resolve()
     for name in ("godot", "godot4", *names):
         resolved = shutil.which(name)
         if resolved:
             return Path(resolved).resolve()
-    raise DiscoveryError("Godot 4.5.1 .NET was not found. Run scripts/bootstrap.ps1 or set GODOT.")
+    raise DiscoveryError("Godot 4.5.1 .NET was not found. Optional for pure .NET runner; required only for FullAppBridge.")
 
 
 def default_sandbox_root() -> Path:
