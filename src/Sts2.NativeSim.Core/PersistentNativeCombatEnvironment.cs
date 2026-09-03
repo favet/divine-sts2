@@ -1213,6 +1213,15 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             object runManager = ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!;
             if (ReflectionTools.Get(_run!, "IsGameOver") is not true
                 && ReflectionTools.Invoke(runManager, "EnterNextAct") is Task win) await win.ConfigureAwait(false);
+
+            int currentAct = Convert.ToInt32(ReflectionTools.Get(_run!, "CurrentActIndex"));
+            int actCount = ReflectionTools.Enumerate(ReflectionTools.Get(_run!, "Acts")).Count;
+            if (currentAct < actCount && ReflectionTools.Get(_run!, "IsGameOver") is not true)
+            {
+                _eventMode = false; _event = null; _eventId = null;
+                _runStage = "map";
+                return;
+            }
             _runWon = true; _eventMode = false; _event = null; _eventId = null; _runStage = "run_terminal";
             return;
         }
