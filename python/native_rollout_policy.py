@@ -48,13 +48,15 @@ class NativeLearnedPolicy:
     def __init__(self, exploration: float = 0.05, require_combat_checkpoint: bool = True,
                  combat_checkpoint: str | Path | None = None,
                  native_macro_corpus: str | Path | None = None,
-                 card_database: str | Path | None = None):
+                 card_database: str | Path | None = None,
+                 alteration: str | None = None):
         if not 0.0 <= exploration <= 1.0:
             raise ValueError("exploration must be between zero and one")
         self.exploration = exploration
+        self.alteration = alteration
         self._inference_lock = threading.Lock()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.empirical_macro = EmpiricalA10MacroPolicy()
+        self.empirical_macro = EmpiricalA10MacroPolicy(mode=alteration or "baseline")
         self.vocab = EntityVocabulary()
         self.state_enc = CombatV1StateEncoder(self.vocab)
         self.action_enc = CombatV1ActionEncoder(self.vocab)
@@ -141,13 +143,33 @@ class NativeLearnedPolicy:
                 potion = self.macro.select_potion(macro_obs, adapted)
                 if potion is not None:
                     return PolicyDecision(potion, "agentic_potion_prior")
-            candidate_kinds = {"play_card", "end_turn", "use_potion"} if self.combat_architecture == "v12" else {"play_card", "end_turn"}
+
+            # B1 Tactical Silver Bullet: Emergency Combat Potion Reflex
+            if self.alteration == "b1_tactical":
+                features = state.get("scoring_features") or {}
+                combat = observation.get("combat") or {}
+                creatures = combat.get("creatures") or []
+                incoming_damage = sum(
+                    float(intent.get("damage") or 0.0) * max(1.0, float(intent.get("repeats") or 1.0))
+                    for c in creatures if str(c.get("side", "")).lower() == "enemy"
+                    for intent in ((c.get("next_move") or {}).get("intents") or [])
+                )
+                player_block = float((features.get("combat") or {}).get("block", 0))
+                player_hp = float(features.get("current_hp", 80))
+                unblocked = incoming_damage - player_block
+
+                if unblocked >= 14 or unblocked >= player_hp:
+                    potion_acts = [a for a in actions if a.get("kind") == "use_potion"]
+                    if potion_acts:
+                        return PolicyDecision(potion_acts[0]["action_id"], "b1_emergency_potion_reflex")
+
+            candidate_kinds = {"play_card", "end_turn", "use_potion"} if (self.combat_architecture in {"v12", "v5"} and self.alteration == "b1_tactical") else {"play_card", "end_turn"}
             candidates = [action for action in actions if action.get("kind") in candidate_kinds]
             if not candidates:
                 return self._sample(state, actions, "exploration_no_combat_candidate")
             if self._draw(state, "combat-explore") < self.exploration:
                 return self._sample(state, candidates, "combat_exploration")
-            return PolicyDecision(self._score_combat(state, candidates), "v10_combat_policy")
+            return PolicyDecision(self._score_combat(state, candidates), f"{self.combat_architecture}_combat_policy")
 
         if decision_kind == "card_choice" and (observation.get("combat") or {}) and self.combat_architecture == "v12":
             return PolicyDecision(self._score_combat(state, actions), "v12_combat_card_choice")
@@ -554,6 +576,27 @@ class NativeLearnedPolicy:
             out = self.combat_model(s_b, a_b)
             logits = out["action_logits"].squeeze(0)[:len(candidates)]
             best_idx = int(logits.argmax().item())
+
+            # B1 Tactical Silver Bullet: Blunder Aversion Guard
+            if self.alteration == "b1_tactical":
+                chosen = candidates[best_idx]
+                if chosen.get("kind") == "end_turn" and len(candidates) > 1:
+                    features = state.get("scoring_features") or {}
+                    combat = obs.get("combat") or {}
+                    creatures = combat.get("creatures") or []
+                    incoming = sum(
+                        float(intent.get("damage") or 0.0) * max(1.0, float(intent.get("repeats") or 1.0))
+                        for c in creatures if str(c.get("side", "")).lower() == "enemy"
+                        for intent in ((c.get("next_move") or {}).get("intents") or [])
+                    )
+                    player_block = float((features.get("combat") or {}).get("block", 0))
+                    energy = int((features.get("combat") or {}).get("energy", 0))
+                    if incoming > player_block and energy > 0:
+                        alt_idxs = [i for i, c in enumerate(candidates) if c.get("kind") == "play_card"]
+                        if alt_idxs:
+                            best_alt = max(alt_idxs, key=lambda i: logits[i].item())
+                            if logits[best_alt].item() > logits[best_idx].item() - 2.5:
+                                best_idx = best_alt
         return candidates[best_idx]["action_id"]
 
     def _sample(self, state: dict[str, Any], actions: list[dict[str, Any]], source: str) -> PolicyDecision:

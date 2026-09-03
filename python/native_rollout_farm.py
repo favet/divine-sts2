@@ -246,6 +246,7 @@ def run_farm(args: argparse.Namespace) -> dict[str, Any]:
             combat_checkpoint=args.combat_checkpoint,
             native_macro_corpus=args.native_macro_corpus,
             card_database=args.card_database,
+            alteration=getattr(args, "alteration", None),
         )
     else:
         policy = DeterministicLegalPolicy()
@@ -404,6 +405,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--summary-only", action="store_true", help="benchmark without transition records")
     parser.add_argument("--duration", type=float, default=None, help="duration in seconds to run continuously; overrides fixed episode count")
+    parser.add_argument("--alteration", choices=("none", "b1_tactical", "b2_macro"), default="none", help="silver bullet alteration for Side B candidate")
     args = parser.parse_args()
     if not args.duration and (args.episodes < 1 or args.workers < 1 or args.step_limit < 1):
         parser.error("episodes, workers, and step-limit must be positive")

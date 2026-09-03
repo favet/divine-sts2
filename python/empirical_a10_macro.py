@@ -1,4 +1,4 @@
-﻿"""
+"""
 Empirical A10 Macro Policy for Slay the Spire 2.
 Derived directly from the forensic analysis of 593 genuine Ascension 10 Ironclad runs
 (213 late Act 3 / Won runs vs 224 early Act 1 deaths).
@@ -54,6 +54,9 @@ CURSES = {"INJURY", "PAIN", "REGRET", "WRITHE", "NORMALITY", "DOUBT", "CLUMSY", 
 class EmpiricalA10MacroPolicy:
     """Evaluates macro decision surfaces (cards, maps, rests, events, shops) using empirical A10 rules."""
 
+    def __init__(self, mode: str = "baseline"):
+        self.mode = mode
+
     def select_card_reward(self, state: Dict[str, Any], actions: List[Dict[str, Any]]) -> Optional[str]:
         card_candidates = [
             a for a in actions
@@ -89,6 +92,11 @@ class EmpiricalA10MacroPolicy:
                 elif score < 0.0:
                     score -= 1.0
 
+            # B2 Macro Silver Bullet: Hard-Pool Attack Priority
+            if self.mode == "b2_macro" and floor <= 6:
+                if raw_id in {"ANGER", "UPPERCUT", "HEADBUTT", "TWIN_STRIKE", "CARNAGE", "CLEAVE", "CARVE", "BLUDGEON"}:
+                    score += 3.0
+
             # Synergies with existing cards
             has_bloodletting = any("BLOODLETTING" in str(c.get("model_id", "")).upper() for c in deck)
             if has_bloodletting and raw_id in {"RUPTURE", "INFERNO", "OFFERING", "COLOSSUS"}:
@@ -115,6 +123,7 @@ class EmpiricalA10MacroPolicy:
             return None
 
         features = state.get("scoring_features") or {}
+        deck = features.get("deck") or []
         hp = float(features.get("current_hp", 80))
         max_hp = max(1.0, float(features.get("max_hp", 80)))
         hp_pct = hp / max_hp
@@ -133,15 +142,29 @@ class EmpiricalA10MacroPolicy:
                     score = 50.0  # Urgent healing
                 elif floor >= 14:
                     score = 40.0  # Pre-boss rest/upgrade
+                elif self.mode == "b2_macro" and floor <= 8:
+                    score = 30.0  # Pre-elite upgrade priority
                 else:
                     score = 10.0
             elif ptype == "Elite":
-                if hp_pct >= 0.70 and floor >= 6:
-                    score = 30.0  # Snowball relics
-                elif hp_pct < 0.50:
-                    score = -50.0 # Dangerously low HP, avoid elite death
+                if self.mode == "b2_macro":
+                    has_burst = any(k in str(deck).upper() for k in ["UPPERCUT", "DOMINATE", "BLOODLETTING", "ANGER", "CARNAGE", "BLUDGEON", "BASH+"])
+                    has_potion = int(features.get("potion_count", 0)) > 0
+                    if floor < 8:
+                        score = -100.0  # Absolute veto on suicidal floor 6-7 elites
+                    elif hp_pct >= 0.75 and (has_burst or has_potion):
+                        score = 35.0   # Snowball when prepared
+                    elif hp_pct < 0.60:
+                        score = -50.0  # Avoid death at medium/low HP
+                    else:
+                        score = 2.0
                 else:
-                    score = 5.0
+                    if hp_pct >= 0.70 and floor >= 6:
+                        score = 30.0  # Snowball relics
+                    elif hp_pct < 0.50:
+                        score = -50.0 # Dangerously low HP, avoid elite death
+                    else:
+                        score = 5.0
             elif ptype == "Shop":
                 gold = int(features.get("gold", 0))
                 score = 25.0 if gold >= 200 else 5.0
@@ -160,6 +183,13 @@ class EmpiricalA10MacroPolicy:
         hp = float(features.get("current_hp", 80))
         max_hp = max(1.0, float(features.get("max_hp", 80)))
         hp_pct = hp / max_hp
+        floor = int(features.get("act_floor", 1))
+
+        # B2 Macro Silver Bullet: Pre-Elite Upgrade Priority
+        if self.mode == "b2_macro" and floor <= 8 and hp_pct >= 0.40:
+            smith_act = next((a for a in actions if "SMITH" in str(a.get("action_id", "")).upper()), None)
+            if smith_act:
+                return smith_act["action_id"]
 
         # If HP is low, Heal (REST)
         if hp_pct < 0.50:
