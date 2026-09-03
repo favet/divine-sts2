@@ -144,27 +144,24 @@ class NativeLearnedPolicy:
                 if potion is not None:
                     return PolicyDecision(potion, "agentic_potion_prior")
 
-            # B1 Tactical Silver Bullet: Emergency Combat Potion Reflex
-            if self.alteration == "b1_tactical":
-                features = state.get("scoring_features") or {}
-                combat = observation.get("combat") or {}
-                creatures = combat.get("creatures") or []
-                incoming_damage = sum(
-                    float(intent.get("damage") or 0.0) * max(1.0, float(intent.get("repeats") or 1.0))
-                    for c in creatures if str(c.get("side", "")).lower() == "enemy"
-                    for intent in ((c.get("next_move") or {}).get("intents") or [])
-                )
-                player_block = float((features.get("combat") or {}).get("block", 0))
-                player_hp = float(features.get("current_hp", 80))
-                unblocked = incoming_damage - player_block
+            # BASE ESSENTIAL 1: Strategic Potion Engine (Tier-List Calibrated)
+            strategic_potion = self._select_strategic_potion(state, actions)
+            if strategic_potion is not None:
+                return PolicyDecision(strategic_potion, "strategic_potion_engine")
 
-                if unblocked >= 14 or unblocked >= player_hp:
-                    potion_acts = [a for a in actions if a.get("kind") == "use_potion"]
-                    if potion_acts:
-                        return PolicyDecision(potion_acts[0]["action_id"], "b1_emergency_potion_reflex")
+            # BASE ESSENTIAL 2: Zero Wasted Energy Guard
+            # Never waste energy ending turn early when playable useful cards exist in hand.
+            playable_cards = [a for a in actions if a.get("kind") == "play_card"]
+            features = state.get("scoring_features") or {}
+            current_energy = int((features.get("combat") or {}).get("energy", 0))
 
-            candidate_kinds = {"play_card", "end_turn", "use_potion"} if (self.combat_architecture in {"v12", "v5"} and self.alteration == "b1_tactical") else {"play_card", "end_turn"}
+            candidate_kinds = {"play_card", "use_potion", "end_turn"}
             candidates = [action for action in actions if action.get("kind") in candidate_kinds]
+
+            # If energy remains and we have playable cards, strictly forbid premature end_turn
+            if current_energy > 0 and playable_cards:
+                candidates = [action for action in candidates if action.get("kind") != "end_turn"]
+
             if not candidates:
                 return self._sample(state, actions, "exploration_no_combat_candidate")
             if self._draw(state, "combat-explore") < self.exploration:
@@ -325,6 +322,55 @@ class NativeLearnedPolicy:
         if len(progression) == 1 and len(actions) == 1:
             return PolicyDecision(progression[0]["action_id"], "forced_progression")
         return self._sample(state, actions, f"unlearned_{decision_kind}")
+
+    def _select_strategic_potion(self, state: dict[str, Any], actions: list[dict[str, Any]]) -> str | None:
+        potion_actions = [a for a in actions if a.get("kind") == "use_potion"]
+        if not potion_actions:
+            return None
+
+        obs = state.get("observation") or {}
+        feat = state.get("scoring_features") or {}
+        combat = obs.get("combat") or {}
+        creatures = combat.get("creatures") or []
+        room = obs.get("room") or {}
+        room_type = str(room.get("room_type") or feat.get("room_type", "Monster")).lower()
+        is_elite_or_boss = "elite" in room_type or "boss" in room_type
+        turn = int(combat.get("turn", 1))
+
+        enemies = [c for c in creatures if str(c.get("side", "")).lower() == "enemy"]
+        incoming_damage = 0.0
+        for e in enemies:
+            for intent in ((e.get("next_move") or {}).get("intents") or []):
+                incoming_damage += float(intent.get("damage") or 0.0) * max(1.0, float(intent.get("repeats") or 1.0))
+        player_block = float((feat.get("combat") or {}).get("block", 0))
+        player_hp = float(feat.get("current_hp", 80))
+        unblocked = incoming_damage - player_block
+
+        for action in potion_actions:
+            params = action.get("parameters") or {}
+            model_id = str(params.get("model_id") or action.get("action_id") or "").upper()
+
+            # Invariant 1: Turn 1 Scaling Potions on Bosses / Elites
+            if is_elite_or_boss and turn == 1:
+                if any(k in model_id for k in ["CULTIST", "MAZALETH", "STRENGTH", "DEXTERITY"]):
+                    return action["action_id"]
+
+            # Invariant 2: Targeted Snipe / AoE against Swarms or Dangerous Adds
+            if any(k in model_id for k in ["FIRE_POTION", "EXPLOSIVE"]):
+                if len(enemies) > 1 or is_elite_or_boss:
+                    return action["action_id"]
+
+            # Invariant 3: Tactical Energy / Draw Acceleration
+            if any(k in model_id for k in ["ENERGY_POTION", "SWIFT_POTION", "POWER_POTION", "DUPLICATOR"]):
+                if is_elite_or_boss and turn <= 3:
+                    return action["action_id"]
+
+            # Invariant 4: True Lethal Negation
+            if unblocked >= player_hp or (unblocked >= 20 and player_hp <= 35):
+                if any(k in model_id for k in ["GHOST_IN_A_JAR", "LUCKY_TONIC", "BLOCK_POTION", "SPEED_POTION", "HEART_OF_IRON"]):
+                    return action["action_id"]
+
+        return None
 
     def _macro_observation(self, state: dict[str, Any]) -> dict[str, Any]:
         features = state.get("scoring_features") or {}
