@@ -165,6 +165,17 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         _combatCreaturesById.Clear();
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         _runMode = false; _runStage = "map"; _runWon = false; _roomRewardsSet = null; _resolvedRoomRewards.Clear(); _pendingRoomRewardIndex = null; _pendingRewardsSet = null; _pendingRewardSelection = null; _customRewardMode = false; _customRewardsLinked = false; _customRewardKinds = []; _treasureRoom = null; _treasureSynchronizer = null; _treasureOpened = false; _treasureResolved = false; _merchantRoom = null; _merchantInventory = null; _merchantEntryIdentities.Clear(); _mapMode = false; _rewardMode = false; _rewardKind = "card"; _rewardModelId = null; _cardReward = null; _restMode = false; _eventMode = false; _eventId = null; _event = null; Validate(request); _reset = request; _history.Clear(); _currentBranchHandle = null; _lastActionId = null; Construct(request);
+        try
+        {
+            object? runManager = ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance");
+            if (runManager is not null)
+            {
+                object? synchronizer = ReflectionTools.Get(runManager, "RewardsSetSynchronizer");
+                if (synchronizer is not null)
+                    ReflectionTools.Invoke(synchronizer, "BeforeLeavingRoom");
+            }
+        }
+        catch { }
         return Capture(new { kind = "reset", replayed_actions = 0 });
     }
     public EnvironmentResult RunReset(ResetRequest request)
@@ -1257,6 +1268,47 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         return new(observation, _hash, actions, false, false, handle, transition, ScoringFeatures());
     }
 
+    private void EnsureRewardsSetViewing(object synchronizer, object rewardsSet)
+    {
+        try
+        {
+            int setId = Convert.ToInt32(ReflectionTools.Get(rewardsSet, "Id") ?? -1);
+            if (setId < 0)
+            {
+                ReflectionTools.Invoke(synchronizer, "BeginRewardsSet", rewardsSet);
+                return;
+            }
+            object? rewardStates = ReflectionTools.Get(synchronizer, "_rewardStates");
+            if (rewardStates is IEnumerable enumerable)
+            {
+                foreach (object? state in enumerable)
+                {
+                    if (state is null) continue;
+                    object? stack = ReflectionTools.Get(state, "rewardsStack");
+                    if (stack is IEnumerable stackEnum)
+                    {
+                        foreach (object? entry in stackEnum)
+                        {
+                            if (entry is not null && ReferenceEquals(ReflectionTools.Get(entry, "set"), rewardsSet))
+                                return;
+                        }
+                    }
+                }
+                ReflectionTools.Invoke(synchronizer, "BeginRewardsSet", rewardsSet);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[WARN] EnsureRewardsSetViewing: {ex.Message}");
+            try
+            {
+                if (Convert.ToInt32(ReflectionTools.Get(rewardsSet, "Id") ?? -1) < 0)
+                    ReflectionTools.Invoke(synchronizer, "BeginRewardsSet", rewardsSet);
+            }
+            catch { }
+        }
+    }
+
     private async Task GenerateRoomRewardsAsync()
     {
         object room = ReflectionTools.Get(_run!, "CurrentRoom") ?? throw new ProtocolException("invalid_state", "No current room can generate rewards.");
@@ -1265,6 +1317,8 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         await task.ConfigureAwait(false);
         _roomRewardsSet = ReflectionTools.Get(task, "Result")!;
         _resolvedRoomRewards.Clear();
+        object synchronizer = ReflectionTools.Get(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!, "RewardsSetSynchronizer")!;
+        EnsureRewardsSetViewing(synchronizer, _roomRewardsSet);
         _runStage = "rewards";
     }
 
@@ -1310,17 +1364,60 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             ReflectionTools.Invoke(reward, "OnSkipped");
             return;
         }
-        if (reward.GetType().Name == "CardReward")
+        object synchronizer = ReflectionTools.Get(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!, "RewardsSetSynchronizer")!;
+        EnsureRewardsSetViewing(synchronizer, _roomRewardsSet);
+        _pendingRoomRewardIndex = rewardIndex;
+        try
         {
-            _rewardSelectionIndex = optionIndex;
-            _pendingRoomRewardIndex = rewardIndex;
-            await StartTransitionAsync(() => (Task)ReflectionTools.Invoke(reward, "SelectLocalOption", optionIndex, _player!)!);
+            if (reward.GetType().Name == "CardReward")
+            {
+                _rewardSelectionIndex = optionIndex;
+                MethodInfo? selectOption = reward.GetType().GetMethod("SelectLocalOption", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (selectOption is not null)
+                {
+                    await StartTransitionAsync(() => (Task)selectOption.Invoke(reward, [optionIndex, _player!])!);
+                }
+                else
+                {
+                    await StartTransitionAsync(async () =>
+                    {
+                        try
+                        {
+                            await ((Task)ReflectionTools.Invoke(synchronizer, "SelectLocalReward", reward)!).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.Error.WriteLine($"[WARN] SelectLocalReward failed for CardReward ({ex.Message}), falling back to SelectUnsynchronized");
+                            await ((Task)ReflectionTools.Invoke(reward, "SelectUnsynchronized")!).ConfigureAwait(false);
+                        }
+                    });
+                }
+            }
+            else
+            {
+                await StartTransitionAsync(async () =>
+                {
+                    try
+                    {
+                        await ((Task)ReflectionTools.Invoke(synchronizer, "SelectLocalReward", reward)!).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[WARN] SelectLocalReward failed for {reward.GetType().Name} ({ex.Message}), falling back to SelectUnsynchronized");
+                        await ((Task)ReflectionTools.Invoke(reward, "SelectUnsynchronized")!).ConfigureAwait(false);
+                    }
+                });
+            }
         }
-        else
+        finally
         {
-            object synchronizer = ReflectionTools.Get(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!, "RewardsSetSynchronizer")!;
-            _pendingRoomRewardIndex = rewardIndex;
-            await StartTransitionAsync(() => (Task)ReflectionTools.Invoke(synchronizer, "SelectLocalReward", reward)!);
+            if (_pendingChoice is null)
+            {
+                if (ReflectionTools.Get(reward, "SuccessfullySelected") is true)
+                    _resolvedRoomRewards.Add(rewardIndex);
+                _rewardSelectionIndex = null;
+                _pendingRoomRewardIndex = null;
+            }
         }
     }
 
@@ -1328,6 +1425,12 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     {
         if (_roomRewardsSet is null) throw new ProtocolException("invalid_action", "No native room rewards are active.");
         object runManager = ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Runs.RunManager"), "Instance")!;
+        try
+        {
+            object synchronizer = ReflectionTools.Get(runManager, "RewardsSetSynchronizer")!;
+            ReflectionTools.Invoke(synchronizer, "BeforeLeavingRoom");
+        }
+        catch { }
         bool resumesEvent = ReflectionTools.Enumerate(ReflectionTools.Get(_run!, "Rooms")).Count > 1;
         int roomCount = ReflectionTools.Enumerate(ReflectionTools.Get(_run!, "Rooms")).Count;
         object? currentRoom = ReflectionTools.Get(_run!, "CurrentRoom");
@@ -2259,11 +2362,25 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             if (_rewardSelectionIndex is null) throw new ProtocolException("unsupported_choice", "Native reward selection was requested without a coordinated reward action.");
             if (_rewardSelectionIndex < 0) return Activator.CreateInstance(method.ReturnType);
             object[] results = ReflectionTools.Enumerate(args![0]).Where(result => result is not null).Select(result => result!).ToArray();
-            if (_rewardSelectionIndex >= results.Length) throw new ProtocolException("invalid_choice", $"Reward option {_rewardSelectionIndex} is outside 0..{results.Length - 1}.");
             object selection = Activator.CreateInstance(method.ReturnType)!;
-            ReflectionTools.Set(selection, "card", ReflectionTools.Get(results[_rewardSelectionIndex.Value], "Card"));
-            ReflectionTools.Set(selection, "alternative", null);
-            return selection;
+            if (_rewardSelectionIndex.Value < results.Length)
+            {
+                ReflectionTools.Set(selection, "card", ReflectionTools.Get(results[_rewardSelectionIndex.Value], "Card"));
+                ReflectionTools.Set(selection, "alternative", null);
+                return selection;
+            }
+            if (args.Length > 1 && args[1] is not null)
+            {
+                object[] alternatives = ReflectionTools.Enumerate(args[1]).Where(alt => alt is not null).Select(alt => alt!).ToArray();
+                int altIndex = _rewardSelectionIndex.Value - results.Length;
+                if (altIndex >= 0 && altIndex < alternatives.Length)
+                {
+                    ReflectionTools.Set(selection, "card", null);
+                    ReflectionTools.Set(selection, "alternative", alternatives[altIndex]);
+                    return selection;
+                }
+            }
+            throw new ProtocolException("invalid_choice", $"Reward option {_rewardSelectionIndex} is outside 0..{results.Length - 1}.");
         }
         if (method.Name != "GetSelectedCards" || args is null)
             throw new ProtocolException("unsupported_choice", $"Unknown native selector method {method}.");
@@ -2331,6 +2448,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             object? reward = ReflectionTools.Enumerate(ReflectionTools.Get(_roomRewardsSet, "Rewards")).ElementAtOrDefault(rewardIndex);
             if (reward is not null && (bool)ReflectionTools.Get(reward, "SuccessfullySelected")!) _resolvedRoomRewards.Add(rewardIndex);
             _pendingRoomRewardIndex = null;
+            _rewardSelectionIndex = null;
         }
         if (_rewardMode && _cardReward is not null && _pendingChoice is null && _continuationTask is null)
         {
