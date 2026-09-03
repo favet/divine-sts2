@@ -334,8 +334,16 @@ class NativeLearnedPolicy:
         creatures = combat.get("creatures") or []
         room = obs.get("room") or {}
         room_type = str(room.get("room_type") or feat.get("room_type", "Monster")).lower()
-        is_elite_or_boss = "elite" in room_type or "boss" in room_type
+        is_elite = "elite" in room_type
+        is_boss = "boss" in room_type
+        is_elite_or_boss = is_elite or is_boss
         turn = int(combat.get("turn", 1))
+
+        # Potion Belt Capacity Ratio (Smooth Quadratic Capacity Pressure)
+        potions = feat.get("potions") or []
+        count = int(feat.get("potion_count", len(potions)))
+        capacity = max(1, int(feat.get("potion_capacity", 3)))
+        capacity_ratio = count / capacity
 
         enemies = [c for c in creatures if str(c.get("side", "")).lower() == "enemy"]
         incoming_damage = 0.0
@@ -350,24 +358,38 @@ class NativeLearnedPolicy:
             params = action.get("parameters") or {}
             model_id = str(params.get("model_id") or action.get("action_id") or "").upper()
 
-            # Invariant 1: Turn 1 Scaling Potions on Bosses / Elites
+            is_boss_vault = any(k in model_id for k in ["CULTIST", "MAZALETH", "STRENGTH", "DEXTERITY", "GHOST_IN_A_JAR", "DUPLICATOR"])
+
+            # Invariant 1: Turn 1 Scaling Potions on Bosses / Elites (Boss Vault Deployed)
             if is_elite_or_boss and turn == 1:
-                if any(k in model_id for k in ["CULTIST", "MAZALETH", "STRENGTH", "DEXTERITY"]):
+                if is_boss_vault:
                     return action["action_id"]
 
-            # Invariant 2: Targeted Snipe / AoE against Swarms or Dangerous Adds
+            # Invariant 2: Targeted Snipe / AoE against Swarms or High-Threat Monsters
             if any(k in model_id for k in ["FIRE_POTION", "EXPLOSIVE"]):
+                # Always use against swarms (Sentries, Gremlins) or Elites
                 if len(enemies) > 1 or is_elite_or_boss:
+                    return action["action_id"]
+                # Capacity pressure: if holding >= 2 potions, burn Fire Potion on tough single enemy to preserve HP
+                if capacity_ratio >= 0.67 and any(float(e.get("current_hp", 0)) >= 25 for e in enemies):
                     return action["action_id"]
 
             # Invariant 3: Tactical Energy / Draw Acceleration
-            if any(k in model_id for k in ["ENERGY_POTION", "SWIFT_POTION", "POWER_POTION", "DUPLICATOR"]):
+            if any(k in model_id for k in ["ENERGY_POTION", "SWIFT_POTION", "POWER_POTION"]):
                 if is_elite_or_boss and turn <= 3:
                     return action["action_id"]
+                if capacity_ratio >= 0.67 and unblocked >= 10:
+                    return action["action_id"]
 
-            # Invariant 4: True Lethal Negation
-            if unblocked >= player_hp or (unblocked >= 20 and player_hp <= 35):
+            # Invariant 4: True Lethal & Emergency Damage Negation
+            if unblocked >= player_hp or (unblocked >= 18 and player_hp <= 35):
                 if any(k in model_id for k in ["GHOST_IN_A_JAR", "LUCKY_TONIC", "BLOCK_POTION", "SPEED_POTION", "HEART_OF_IRON"]):
+                    return action["action_id"]
+
+            # Invariant 5: High-Capacity Flow (Burn utility potions to prevent chip damage and unlock drops)
+            # If belt is near full (2/3 or 3/3), DO NOT HOARD utility potions. Prevent 8+ damage immediately!
+            if capacity_ratio >= 0.67 and not is_boss_vault:
+                if unblocked >= 8 and any(k in model_id for k in ["BLOCK_POTION", "SPEED_POTION", "FLEX_POTION", "WEAK_POTION"]):
                     return action["action_id"]
 
         return None

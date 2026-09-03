@@ -85,34 +85,54 @@ class EmpiricalA10MacroPolicy:
             raw_id = str(params.get("model_id") or "").replace("CARD.", "").upper()
             score = A10_CARD_WEIGHTS.get(raw_id, 0.5)
 
-            # Early game tempo attack boost
-            if floor <= 6 and attack_count < 4:
-                if score > 1.0:
-                    score += 1.5
-                elif score < 0.0:
-                    score -= 1.0
-
-            # B2 Macro Silver Bullet: Hard-Pool Attack Priority
-            if self.mode == "b2_macro" and floor <= 6:
+            # Early game frontloaded damage priority (Floors 1-5)
+            if floor <= 5 and attack_count < 4:
                 if raw_id in {"ANGER", "UPPERCUT", "HEADBUTT", "TWIN_STRIKE", "CARNAGE", "CLEAVE", "CARVE", "BLUDGEON"}:
                     score += 3.0
 
-            # Synergies with existing cards
+            # ARCHETYPE 1: Strength & Multi-Hit Acceleration
+            has_strength = any(any(k in str(c.get("model_id", "")).upper() for k in ["INFLAME", "SPOT_WEAKNESS", "DEMON_FORM", "RUPTURE", "VAJRA"]) for c in deck)
+            has_multi_attack = any(any(k in str(c.get("model_id", "")).upper() for k in ["TWIN_STRIKE", "SWORD_BOOMERANG", "PUMMEL", "HEAVY_BLADE", "REAPER"]) for c in deck)
+            if has_strength and raw_id in {"TWIN_STRIKE", "SWORD_BOOMERANG", "PUMMEL", "HEAVY_BLADE", "REAPER"}:
+                score += 2.5
+            if has_multi_attack and raw_id in {"INFLAME", "SPOT_WEAKNESS", "DEMON_FORM", "RUPTURE"}:
+                score += 2.5
+
+            # ARCHETYPE 2: Exhaust Engine & Card Velocity
+            has_exhaust_payoff = any(any(k in str(c.get("model_id", "")).upper() for k in ["FEEL_NO_PAIN", "DARK_EMBRACE", "CORRUPTION"]) for c in deck)
+            if has_exhaust_payoff and raw_id in {"SECOND_WIND", "TRUE_GRIT", "BURNING_PACT", "FIEND_FIRE", "SENTINEL"}:
+                score += 3.0
+            elif raw_id in {"FEEL_NO_PAIN", "DARK_EMBRACE", "CORRUPTION"}:
+                score += 2.0
+
+            # ARCHETYPE 3: Vulnerable Burst & Cycling
+            has_vuln = any(any(k in str(c.get("model_id", "")).upper() for k in ["BASH", "UPPERCUT", "SHOCKWAVE"]) for c in deck)
+            if has_vuln and raw_id in {"CARNAGE", "BLOOD_FOR_BLOOD", "DROPKICK"}:
+                score += 2.0
+
+            # ARCHETYPE 4: Mid-Act Defensive Mitigation Rebalancing
+            # Once deck has sufficient damage (Floors 6+ and attack_count >= 4), heavily prioritize premium block
+            if floor >= 6 and attack_count >= 4:
+                if raw_id in {"SHRUG_IT_OFF", "FLAME_BARRIER", "POWER_THROUGH", "IMPERVIOUS", "GHOSTLY_ARMOR", "SHOCKWAVE"}:
+                    score += 3.5
+                elif raw_id in {"STRIKE", "WILD_STRIKE", "CLOTHESLINE", "PERFECTED_STRIKE"}:
+                    score -= 2.0
+
+            # Synergies with self-damage
             has_bloodletting = any("BLOODLETTING" in str(c.get("model_id", "")).upper() for c in deck)
             if has_bloodletting and raw_id in {"RUPTURE", "INFERNO", "OFFERING", "COLOSSUS"}:
-                score += 1.5
+                score += 2.0
 
             scored.append((score, action["action_id"]))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         best_score, best_action_id = scored[0]
 
-        # Skip discipline: if deck is already mature (>= 18 cards) and best card is mediocre
-        if deck_size >= 18 and best_score < 1.0 and skip_action is not None:
-            return skip_action["action_id"]
-
-        # If best score is negative (trap cards only) and deck >= 12, skip
-        if deck_size >= 12 and best_score < 0.0 and skip_action is not None:
+        # Smooth Skip Gradient: Threshold scales continuously with deck maturity
+        # Deck size <= 11: skip threshold is 0.5 (take almost anything useful)
+        # Deck size >= 18: skip threshold is 2.5 (only take premium cards to prevent draw dilution)
+        skip_threshold = 0.5 + 0.25 * max(0, deck_size - 11)
+        if best_score < skip_threshold and skip_action is not None:
             return skip_action["action_id"]
 
         return best_action_id
@@ -179,35 +199,52 @@ class EmpiricalA10MacroPolicy:
         return scored[0][1]
 
     def select_rest_choice(self, state: Dict[str, Any], actions: List[Dict[str, Any]]) -> Optional[str]:
+        smith_act = next((a for a in actions if "SMITH" in str(a.get("action_id", "")).upper()), None)
+        rest_act = next((a for a in actions if "REST" in str(a.get("action_id", "")).upper() or "HEAL" in str(a.get("action_id", "")).upper()), None)
+        if not smith_act:
+            return rest_act["action_id"] if rest_act else (actions[0]["action_id"] if actions else None)
+        if not rest_act:
+            return smith_act["action_id"]
+
         features = state.get("scoring_features") or {}
         hp = float(features.get("current_hp", 80))
         max_hp = max(1.0, float(features.get("max_hp", 80)))
-        hp_pct = hp / max_hp
+        hp_ratio = hp / max_hp
         floor = int(features.get("act_floor", 1))
+        potions = features.get("potions") or []
+        deck = [c.get("model_id") if isinstance(c, dict) else str(c) for c in features.get("deck") or []]
 
-        # B2 Macro Silver Bullet: Pre-Elite Upgrade Priority
-        if self.mode == "b2_macro" and floor <= 8 and hp_pct >= 0.40:
-            smith_act = next((a for a in actions if "SMITH" in str(a.get("action_id", "")).upper()), None)
-            if smith_act:
-                return smith_act["action_id"]
+        # Calculate highest upgrade value delta in deck
+        has_unupgraded_bash = any("BASH" in str(c).upper() and "+" not in str(c) for c in deck)
+        has_unupgraded_uppercut = any("UPPERCUT" in str(c).upper() and "+" not in str(c) for c in deck)
+        has_unupgraded_armaments = any("ARMAMENTS" in str(c).upper() and "+" not in str(c) for c in deck)
+        has_unupgraded_carnage = any("CARNAGE" in str(c).upper() and "+" not in str(c) for c in deck)
 
-        # If HP is low, Heal (REST)
-        if hp_pct < 0.50:
-            rest_act = next((a for a in actions if "REST" in str(a.get("action_id", "")).upper()), None)
-            if rest_act:
-                return rest_act["action_id"]
+        upgrade_delta = 1.0
+        if has_unupgraded_armaments:
+            upgrade_delta = 4.5
+        elif has_unupgraded_bash or has_unupgraded_uppercut or has_unupgraded_carnage:
+            upgrade_delta = 3.8
 
-        # If HP is safe, Smith (UPGRADE)
-        smith_act = next((a for a in actions if "SMITH" in str(a.get("action_id", "")).upper()), None)
-        if smith_act:
+        # Virtual HP from holding defensive or burst potions
+        has_block_potion = any(any(k in str(p).upper() for k in ["BLOCK", "GHOST", "BUFFER", "LUCKY", "SPEED"]) for p in potions)
+        has_burst_potion = any(any(k in str(p).upper() for k in ["FIRE", "EXPLOSIVE", "STRENGTH"]) for p in potions)
+        potion_virtual_hp = (0.18 if has_block_potion else 0.0) + (0.10 if has_burst_potion else 0.0)
+
+        # Effective safety ratio = actual HP ratio + virtual HP from potions
+        effective_safety = hp_ratio + potion_virtual_hp
+
+        # Smooth logistic logit difference: Grandmasters smith aggressively early
+        # Centered around effective safety of 0.35
+        q_diff = (effective_safety - 0.35) * 12.0 + (upgrade_delta - 2.0) * 1.5
+
+        # Early act bonus (Floors 1-9): upgrades snowball combat efficiency
+        if floor <= 9:
+            q_diff += 2.0
+
+        if q_diff >= 0.0:
             return smith_act["action_id"]
-
-        # Fallback to rest if smith is not available
-        rest_act = next((a for a in actions if "REST" in str(a.get("action_id", "")).upper()), None)
-        if rest_act:
-            return rest_act["action_id"]
-
-        return actions[0]["action_id"] if actions else None
+        return rest_act["action_id"]
 
     def select_event_choice(self, state: Dict[str, Any], actions: List[Dict[str, Any]]) -> Optional[str]:
         safe_actions = []
@@ -230,11 +267,11 @@ class EmpiricalA10MacroPolicy:
         for a in actions:
             aid = str(a.get("action_id", "")).upper()
             if operation == "remove":
-                # Prioritize removing Strike, then Defend
+                # Grandmaster Rule: Prioritize removing basic Strike over Defend
                 score = 10.0 if "STRIKE" in aid else 5.0 if "DEFEND" in aid else 1.0
             elif operation == "upgrade":
-                # Prioritize upgrading high value cards
-                score = 10.0 if "BLOODLETTING" in aid else 8.0 if "UPPERCUT" in aid else 6.0 if "BASH" in aid else 2.0
+                # Upgrade priority: Bash+ (3-turn vuln) & Uppercut+ (2 weak, 2 vuln) & Armaments+
+                score = 10.0 if "BASH" in aid else 9.5 if "UPPERCUT" in aid else 9.0 if "ARMAMENTS" in aid else 8.0 if "CARNAGE" in aid else 7.0 if "BLOODLETTING" in aid else 6.0 if "ANGER" in aid else 2.0
             else:
                 score = 5.0 if "STRIKE" in aid else 1.0
             scored.append((score, a["action_id"]))
@@ -243,16 +280,67 @@ class EmpiricalA10MacroPolicy:
         return scored[0][1] if scored else None
 
     def select_shop_choice(self, state: Dict[str, Any], actions: List[Dict[str, Any]]) -> Optional[str]:
-        # If leave_shop is an option, default to leaving unless there's an essential purchase
         leave_act = next((a for a in actions if a.get("kind") == "leave_shop"), None)
         buy_acts = [a for a in actions if a.get("kind") == "buy_shop"]
+        if not buy_acts:
+            return leave_act["action_id"] if leave_act else (actions[0]["action_id"] if actions else None)
+
+        features = state.get("scoring_features") or {}
+        gold = int(features.get("gold", 0))
+        potions = features.get("potions") or []
+        deck = [c.get("model_id") if isinstance(c, dict) else str(c) for c in features.get("deck") or []]
+        strike_count = sum(1 for c in deck if "STRIKE" in str(c).upper())
+
+        scored: List[tuple[float, str]] = []
 
         for a in buy_acts:
-            aid = str(a.get("action_id", "")).upper()
-            # Buy Bloodletting or Offering if stocked
-            if any(key in aid for key in ["BLOODLETTING", "OFFERING", "UPPERCUT", "PURGE"]):
-                return a["action_id"]
+            params = a.get("parameters") or {}
+            cost = int(params.get("cost", 999))
+            if cost > gold:
+                continue
+            entry_kind = str(params.get("entry_kind", "")).lower()
+            model_id = str(params.get("model_id") or a.get("action_id", "")).upper()
 
-        if leave_act:
-            return leave_act["action_id"]
-        return actions[0]["action_id"] if actions else None
+            score = 0.0
+
+            # 1. Card Removal / Purge (Highest ROI in Act 1)
+            if entry_kind == "card_removal" or "PURGE" in model_id or "REMOVE" in model_id:
+                if strike_count >= 3:
+                    score = 9.0
+                else:
+                    score = 5.5
+
+            # 2. High-Impact Potions
+            elif entry_kind == "potion" or "POTION" in a.get("action_id", "").upper():
+                if len(potions) < 3:
+                    if any(k in model_id for k in ["CULTIST", "STRENGTH", "DEXTERITY", "GHOST", "FIRE", "BLOCK", "POWER"]):
+                        score = 8.0
+                    else:
+                        score = 4.0
+
+            # 3. Combat Relics
+            elif entry_kind == "relic":
+                if any(k in model_id for k in ["VAJRA", "SMOOTH_STONE", "ANCHOR", "LANTERN", "HORN_CLEAT", "THREAD", "PAPER"]):
+                    score = 8.5
+                else:
+                    score = 5.0
+
+            # 4. Premium Cards
+            elif entry_kind == "card":
+                raw_card = model_id.replace("CARD.", "")
+                base_val = A10_CARD_WEIGHTS.get(raw_card, 0.5)
+                if raw_card in {"SHRUG_IT_OFF", "FLAME_BARRIER", "POWER_THROUGH", "IMPERVIOUS", "SHOCKWAVE", "INFLAME", "UPPERCUT", "ANGER", "POMMEL_STRIKE"}:
+                    score = 6.5 + base_val
+                elif base_val > 1.0:
+                    score = 3.5 + base_val
+                else:
+                    score = 0.5
+
+            if score > 0.0:
+                scored.append((score, a["action_id"]))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if scored and scored[0][0] >= 3.0:
+            return scored[0][1]
+
+        return leave_act["action_id"] if leave_act else actions[0]["action_id"]
