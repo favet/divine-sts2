@@ -344,6 +344,7 @@ class NativeLearnedPolicy:
         count = int(feat.get("potion_count", len(potions)))
         capacity = max(1, int(feat.get("potion_capacity", 3)))
         capacity_ratio = count / capacity
+        floor = int(feat.get("act_floor", 1))
 
         enemies = [c for c in creatures if str(c.get("side", "")).lower() == "enemy"]
         incoming_damage = 0.0
@@ -353,6 +354,12 @@ class NativeLearnedPolicy:
         player_block = float((feat.get("combat") or {}).get("block", 0))
         player_hp = float(feat.get("current_hp", 80))
         unblocked = incoming_damage - player_block
+
+        # Invariant 0: Floors 1-4 (Easy Pool) Potion Protection
+        # Do not burn valuable potions on minor early scratch damage. Build the war chest for Elites & Boss!
+        if floor <= 4 and not is_elite_or_boss:
+            if unblocked < player_hp and unblocked < 16:
+                return None
 
         for action in potion_actions:
             params = action.get("parameters") or {}

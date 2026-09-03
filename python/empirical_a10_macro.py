@@ -167,22 +167,25 @@ class EmpiricalA10MacroPolicy:
                 else:
                     score = 10.0
             elif ptype == "Elite":
-                if self.mode == "b2_macro":
-                    has_burst = any(k in str(deck).upper() for k in ["UPPERCUT", "DOMINATE", "BLOODLETTING", "ANGER", "CARNAGE", "BLUDGEON", "BASH+"])
-                    has_potion = int(features.get("potion_count", 0)) > 0
-                    if floor < 8:
-                        score = -100.0  # Absolute veto on suicidal floor 6-7 elites
-                    elif hp_pct >= 0.75 and (has_burst or has_potion):
-                        score = 35.0   # Snowball when prepared
-                    elif hp_pct < 0.60:
-                        score = -50.0  # Avoid death at medium/low HP
+                # Grandmaster Combat-Readiness Gradient
+                potions = features.get("potions") or []
+                has_upgraded_damage = any(any(k in str(c).upper() for k in ["BASH+", "UPPERCUT+", "CARNAGE+", "ANGER+", "DISMANTLE+"]) for c in deck)
+                has_burst_attacks = any(any(k in str(c).upper() for k in ["UPPERCUT", "CARNAGE", "BLUDGEON", "ANGER", "TWIN_STRIKE", "HEADBUTT", "DISMANTLE"]) for c in deck)
+                has_combat_potion = any(any(k in str(p).upper() for k in ["FIRE", "STRENGTH", "FLEX", "CULTIST", "GHOST", "BLOCK"]) for p in potions)
+                
+                readiness = (2.5 if has_upgraded_damage else 0.0) + (1.5 if has_burst_attacks else 0.0) + (2.0 if has_combat_potion else 0.0)
+
+                # On early floors (Floors 6-7), fighting an Elite unprepared is lethal
+                if floor <= 7:
+                    if readiness >= 3.5 and hp_pct >= 0.80:
+                        score = 25.0  # Prepared to crush Nob/Lagavulin
                     else:
-                        score = 2.0
-                else:
-                    if hp_pct >= 0.70 and floor >= 6:
-                        score = 30.0  # Snowball relics
+                        score = -50.0 # Veto suicidal early elite! Take monster/shop/campfire to prep
+                else: # Floors 8+
+                    if hp_pct >= 0.70 and readiness >= 2.0:
+                        score = 35.0  # Snowball relics when prepared
                     elif hp_pct < 0.50:
-                        score = -50.0 # Dangerously low HP, avoid elite death
+                        score = -40.0 # Dangerously low HP, avoid elite death
                     else:
                         score = 5.0
             elif ptype == "Shop":
