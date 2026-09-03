@@ -18,6 +18,7 @@ import torch
 
 from agentic_macro_prior import AgenticMacroPrior
 from native_outcome_macro_prior import NativeOutcomeMacroPrior
+from empirical_a10_macro import EmpiricalA10MacroPolicy
 from train_v10_combat_policy import (
     ACTION_TYPE_MAP,
     CHAR_TO_IDX,
@@ -48,6 +49,8 @@ class NativeLearnedPolicy:
             raise ValueError("exploration must be between zero and one")
         self.exploration = exploration
         self._inference_lock = threading.Lock()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.empirical_macro = EmpiricalA10MacroPolicy()
         torch.set_num_threads(1)
         try:
             torch.set_num_interop_threads(1)
@@ -77,10 +80,14 @@ class NativeLearnedPolicy:
                 fallback = torch.load(REPO_ROOT / "models" / "v10_combat_policy.pt", map_location="cpu", weights_only=False)
                 self.card_to_idx = fallback.get("card_to_idx", {})
                 self.combat_model = V10CombatPolicyNet(vocab_size=len(self.card_to_idx), embed_dim=128, num_heads=4, max_actions=16)
-                self.combat_model.load_state_dict(fallback["model_state_dict"]); self.combat_model.eval()
+                self.combat_model.load_state_dict(fallback["model_state_dict"])
+                self.combat_model.to(self.device)
+                self.combat_model.eval()
             elif self.combat_architecture == "v12":
                 self.entity_to_idx = checkpoint["entity_to_idx"]
                 self.combat_model = V12CombatPolicyNet(len(self.entity_to_idx))
+                self.combat_model.to(self.device)
+                self.combat_model.eval()
             else:
                 self.card_to_idx = checkpoint.get("card_to_idx", {})
                 self.combat_model = V10CombatPolicyNet(
@@ -88,6 +95,7 @@ class NativeLearnedPolicy:
                 )
             if self.combat_model is not None and self.combat_architecture != "expert_retriever_v1":
                 self.combat_model.load_state_dict(checkpoint["model_state_dict"])
+                self.combat_model.to(self.device)
                 self.combat_model.eval()
         elif require_combat_checkpoint:
             raise FileNotFoundError(f"required combat checkpoint is missing: {checkpoint_path}")
@@ -169,6 +177,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_card(macro_obs, card_actions)
             if learned is not None:
                 return PolicyDecision(learned, "agentic_card_prior")
+            empirical = self.empirical_macro.select_card_reward(state, actions)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_card_prior")
 
         if decision_kind == "map_choice":
             native_learned = self.native_macro.select(state, actions) if self.native_macro is not None else None
@@ -177,6 +188,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_map(macro_obs, [self._adapt_action(a, state) for a in actions])
             if learned is not None:
                 return PolicyDecision(learned, "agentic_route_prior")
+            empirical = self.empirical_macro.select_map_choice(state, actions)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_route_prior")
 
         if decision_kind == "rest_choice":
             native_learned = self.native_macro.select(state, actions) if self.native_macro is not None else None
@@ -185,6 +199,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_rest(macro_obs, [self._adapt_action(a, state) for a in actions])
             if learned is not None:
                 return PolicyDecision(learned, "agentic_rest_prior")
+            empirical = self.empirical_macro.select_rest_choice(state, actions)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_rest_prior")
 
         if decision_kind == "event_choice":
             native_learned = self.native_macro.select(state, actions) if self.native_macro is not None else None
@@ -193,6 +210,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_event(macro_obs, [self._adapt_action(a, state) for a in actions])
             if learned is not None:
                 return PolicyDecision(learned, "agentic_event_prior")
+            empirical = self.empirical_macro.select_event_choice(state, actions)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_event_prior")
 
         if decision_kind == "shop_choice":
             features = state.get("scoring_features") or {}
@@ -210,6 +230,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_shop([self._adapt_action(a, state) for a in usable])
             if learned is not None:
                 return PolicyDecision(learned, "agentic_shop_prior")
+            empirical = self.empirical_macro.select_shop_choice(state, usable)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_shop_prior")
 
         if decision_kind == "custom_reward_choice":
             features = state.get("scoring_features") or {}
@@ -243,6 +266,9 @@ class NativeLearnedPolicy:
             learned = self.macro.select_card_operation(operation, adapted)
             if learned is not None:
                 return PolicyDecision(learned, f"agentic_{operation}_prior")
+            empirical = self.empirical_macro.select_card_choice(state, actions)
+            if empirical is not None:
+                return PolicyDecision(empirical, "empirical_a10_card_choice_prior")
 
         progression = [
             action for action in actions
@@ -381,12 +407,12 @@ class NativeLearnedPolicy:
             ])
         with self._inference_lock, torch.inference_mode():
             logits = self.combat_model(
-                torch.tensor([char_idx], dtype=torch.long),
-                torch.tensor([context], dtype=torch.float32),
-                torch.tensor([hand_tokens], dtype=torch.long),
-                torch.tensor([enemy_tokens], dtype=torch.float32),
-                torch.tensor([action_tokens], dtype=torch.long),
-                torch.ones((1, len(action_tokens)), dtype=torch.float32),
+                torch.tensor([char_idx], dtype=torch.long, device=self.device),
+                torch.tensor([context], dtype=torch.float32, device=self.device),
+                torch.tensor([hand_tokens], dtype=torch.long, device=self.device),
+                torch.tensor([enemy_tokens], dtype=torch.float32, device=self.device),
+                torch.tensor([action_tokens], dtype=torch.long, device=self.device),
+                torch.ones((1, len(action_tokens)), dtype=torch.float32, device=self.device),
             ).squeeze(0)
         return candidates[int(logits[:len(candidates)].argmax().item())]["action_id"]
 
