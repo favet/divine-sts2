@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import itertools
 import json
 import queue
 import threading
@@ -232,7 +233,11 @@ def run_farm(args: argparse.Namespace) -> dict[str, Any]:
             ascension=args.ascension,
         ))
 
-    metrics = FarmMetrics(args.episodes)
+    metrics = FarmMetrics(args.episodes if not args.duration else 0)
+    duration_s = getattr(args, "duration", None)
+    stop_time: float | None = None
+    episode_counter = itertools.count(args.start_index)
+
     if args.policy == "learned":
         from native_rollout_policy import NativeLearnedPolicy
 
@@ -246,6 +251,7 @@ def run_farm(args: argparse.Namespace) -> dict[str, Any]:
         policy = DeterministicLegalPolicy()
 
     def worker_loop(worker_id: int) -> None:
+        nonlocal stop_time
         shard = output_dir / f"worker-{worker_id:02d}.jsonl.gz"
         with gzip.open(shard, "at", encoding="utf-8", compresslevel=args.compression) as handle:
             worker: NativeWorker | None = None
@@ -254,11 +260,27 @@ def run_farm(args: argparse.Namespace) -> dict[str, Any]:
                 worker = NativeWorker()
                 with metrics.lock:
                     metrics.worker_startup_seconds[worker_id] = time.perf_counter() - startup
+                    if stop_time is None and duration_s is not None:
+                        stop_time = time.perf_counter() + duration_s
                 while True:
-                    try:
-                        spec = specs.get_nowait()
-                    except queue.Empty:
+                    if stop_time is not None and time.perf_counter() >= stop_time:
                         break
+                    if stop_time is not None:
+                        with metrics.lock:
+                            idx = next(episode_counter)
+                            char = characters[idx % len(characters)]
+                            spec = EpisodeSpec(
+                                episode_index=idx,
+                                episode_id=f"{args.seed_prefix}-{idx:08d}",
+                                seed=f"{args.seed_prefix}-{idx:08d}",
+                                character=char,
+                                ascension=args.ascension,
+                            )
+                    else:
+                        try:
+                            spec = specs.get_nowait()
+                        except queue.Empty:
+                            break
                     try:
                         summary = drive_episode(
                             worker, policy, spec, handle, args.step_limit, not args.summary_only
@@ -381,8 +403,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compression", type=int, default=3, choices=range(0, 10))
     parser.add_argument("--progress-every", type=int, default=100)
     parser.add_argument("--summary-only", action="store_true", help="benchmark without transition records")
+    parser.add_argument("--duration", type=float, default=None, help="duration in seconds to run continuously; overrides fixed episode count")
     args = parser.parse_args()
-    if args.episodes < 1 or args.workers < 1 or args.step_limit < 1:
+    if not args.duration and (args.episodes < 1 or args.workers < 1 or args.step_limit < 1):
         parser.error("episodes, workers, and step-limit must be positive")
     if args.policy == "learned" and not args.combat_checkpoint:
         parser.error("--policy learned requires --combat-checkpoint")

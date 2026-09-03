@@ -432,11 +432,11 @@ class NativeLearnedPolicy:
             ])
         with self._inference_lock, torch.inference_mode():
             logits = self.combat_model(
-                torch.tensor([char_idx], dtype=torch.long, device=self.device),
-                torch.tensor([context], dtype=torch.float32, device=self.device),
-                torch.tensor([hand_tokens], dtype=torch.long, device=self.device),
-                torch.tensor([enemy_tokens], dtype=torch.float32, device=self.device),
-                torch.tensor([action_tokens], dtype=torch.long, device=self.device),
+                torch.as_tensor([char_idx], dtype=torch.long, device=self.device),
+                torch.as_tensor([context], dtype=torch.float32, device=self.device),
+                torch.as_tensor([hand_tokens], dtype=torch.long, device=self.device),
+                torch.as_tensor([enemy_tokens], dtype=torch.float32, device=self.device),
+                torch.as_tensor([action_tokens], dtype=torch.long, device=self.device),
                 torch.ones((1, len(action_tokens)), dtype=torch.float32, device=self.device),
             ).squeeze(0)
         return candidates[int(logits[:len(candidates)].argmax().item())]["action_id"]
@@ -548,8 +548,8 @@ class NativeLearnedPolicy:
         agent_obs = extract_agent_observation(obs)
         s_t = self.state_enc.encode(agent_obs)
         a_t, _ = self.action_enc.encode(agent_obs, candidates[:64])
-        s_b = {k: v.unsqueeze(0).to(self.device) for k, v in s_t.items()}
-        a_b = {k: v.unsqueeze(0).to(self.device) for k, v in a_t.items()}
+        s_b = {k: v.unsqueeze(0).to(self.device, non_blocking=True) for k, v in s_t.items()}
+        a_b = {k: v.unsqueeze(0).to(self.device, non_blocking=True) for k, v in a_t.items()}
         with self._inference_lock, torch.inference_mode():
             out = self.combat_model(s_b, a_b)
             logits = out["action_logits"].squeeze(0)[:len(candidates)]
