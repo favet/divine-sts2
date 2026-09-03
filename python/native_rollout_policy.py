@@ -19,6 +19,10 @@ import torch
 from agentic_macro_prior import AgenticMacroPrior
 from native_outcome_macro_prior import NativeOutcomeMacroPrior
 from empirical_a10_macro import EmpiricalA10MacroPolicy
+from sts2_native_sim import extract_agent_observation
+from combat_v1.vocab import EntityVocabulary
+from combat_v1.encoder import CombatV1StateEncoder, CombatV1ActionEncoder
+from combat_v5.model import CombatV5PolicyNet
 from train_v10_combat_policy import (
     ACTION_TYPE_MAP,
     CHAR_TO_IDX,
@@ -51,6 +55,9 @@ class NativeLearnedPolicy:
         self._inference_lock = threading.Lock()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.empirical_macro = EmpiricalA10MacroPolicy()
+        self.vocab = EntityVocabulary()
+        self.state_enc = CombatV1StateEncoder(self.vocab)
+        self.action_enc = CombatV1ActionEncoder(self.vocab)
         torch.set_num_threads(1)
         try:
             torch.set_num_interop_threads(1)
@@ -74,8 +81,22 @@ class NativeLearnedPolicy:
         checkpoint_path = Path(combat_checkpoint) if combat_checkpoint else REPO_ROOT / "models" / "v10_combat_policy.pt"
         if checkpoint_path.exists():
             checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-            self.combat_architecture = checkpoint.get("architecture", "v10")
-            if self.combat_architecture == "expert_retriever_v1":
+            if "total_steps" in checkpoint or checkpoint.get("architecture") == "v5":
+                self.combat_architecture = "v5"
+                vocab_sz = checkpoint.get("vocab_size", max(500, len(self.vocab.entity_to_idx)))
+                self.combat_model = CombatV5PolicyNet(
+                    vocab_size=vocab_sz,
+                    embed_dim=256,
+                    num_heads=8,
+                    num_encoder_layers=6,
+                    dim_feedforward=1024,
+                    dropout=0.05,
+                )
+                self.combat_model.load_state_dict(checkpoint["model_state_dict"])
+                self.combat_model.to(self.device)
+                self.combat_model.eval()
+            elif checkpoint.get("architecture") == "expert_retriever_v1":
+                self.combat_architecture = "expert_retriever_v1"
                 self.expert_combat_retriever = ExpertCombatRetriever(checkpoint)
                 fallback = torch.load(REPO_ROOT / "models" / "v10_combat_policy.pt", map_location="cpu", weights_only=False)
                 self.card_to_idx = fallback.get("card_to_idx", {})
@@ -83,17 +104,19 @@ class NativeLearnedPolicy:
                 self.combat_model.load_state_dict(fallback["model_state_dict"])
                 self.combat_model.to(self.device)
                 self.combat_model.eval()
-            elif self.combat_architecture == "v12":
+            elif checkpoint.get("architecture") == "v12":
+                self.combat_architecture = "v12"
                 self.entity_to_idx = checkpoint["entity_to_idx"]
                 self.combat_model = V12CombatPolicyNet(len(self.entity_to_idx))
+                self.combat_model.load_state_dict(checkpoint["model_state_dict"])
                 self.combat_model.to(self.device)
                 self.combat_model.eval()
             else:
+                self.combat_architecture = "v10"
                 self.card_to_idx = checkpoint.get("card_to_idx", {})
                 self.combat_model = V10CombatPolicyNet(
                     vocab_size=len(self.card_to_idx), embed_dim=128, num_heads=4, max_actions=16
                 )
-            if self.combat_model is not None and self.combat_architecture != "expert_retriever_v1":
                 self.combat_model.load_state_dict(checkpoint["model_state_dict"])
                 self.combat_model.to(self.device)
                 self.combat_model.eval()
@@ -353,6 +376,8 @@ class NativeLearnedPolicy:
             raise RuntimeError("combat checkpoint is unavailable")
         if self.combat_architecture == "v12":
             return self._score_combat_v12(state, candidates)
+        if self.combat_architecture == "v5":
+            return self._score_combat_v5(state, candidates)
         features = state.get("scoring_features") or {}
         observation = state.get("observation") or {}
         combat = observation.get("combat") or {}
@@ -517,6 +542,19 @@ class NativeLearnedPolicy:
         with self._inference_lock, torch.inference_mode():
             logits = self.combat_model(**inputs).squeeze(0)
         return candidates[int(logits.argmax().item())]["action_id"]
+
+    def _score_combat_v5(self, state: dict[str, Any], candidates: list[dict[str, Any]]) -> str:
+        obs = state.get("observation") or {}
+        agent_obs = extract_agent_observation(obs)
+        s_t = self.state_enc.encode(agent_obs)
+        a_t, _ = self.action_enc.encode(agent_obs, candidates[:64])
+        s_b = {k: v.unsqueeze(0).to(self.device) for k, v in s_t.items()}
+        a_b = {k: v.unsqueeze(0).to(self.device) for k, v in a_t.items()}
+        with self._inference_lock, torch.inference_mode():
+            out = self.combat_model(s_b, a_b)
+            logits = out["action_logits"].squeeze(0)[:len(candidates)]
+            best_idx = int(logits.argmax().item())
+        return candidates[best_idx]["action_id"]
 
     def _sample(self, state: dict[str, Any], actions: list[dict[str, Any]], source: str) -> PolicyDecision:
         draw = self._draw(state, source)
