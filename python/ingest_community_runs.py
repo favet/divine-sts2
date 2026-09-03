@@ -12,7 +12,13 @@ from typing import Dict, List, Any, Optional, Tuple, Set
 
 from extract_agentic_macro_decisions import extract_archives
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+def _find_repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "game_database").exists() or (parent / "community_runs").exists():
+            return parent
+    return Path(__file__).resolve().parents[2]
+
+REPO_ROOT = _find_repo_root()
 
 
 def normalize_card_name(raw: str) -> str:

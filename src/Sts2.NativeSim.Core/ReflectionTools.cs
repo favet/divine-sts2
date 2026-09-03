@@ -96,22 +96,42 @@ internal static class ReflectionTools
         return exception;
     }
 
+    private static PropertyInfo? FindProperty(Type type, string name)
+    {
+        for (Type? current = type; current != null; current = current.BaseType)
+        {
+            PropertyInfo? prop = current.GetProperty(name, All | BindingFlags.DeclaredOnly);
+            if (prop != null) return prop;
+        }
+        return null;
+    }
+
+    private static FieldInfo? FindField(Type type, string name)
+    {
+        for (Type? current = type; current != null; current = current.BaseType)
+        {
+            FieldInfo? field = current.GetField(name, All | BindingFlags.DeclaredOnly);
+            if (field != null) return field;
+        }
+        return null;
+    }
+
     private static Func<object, object?> CreateGetter(Type type, string name)
     {
-        PropertyInfo? prop = type.GetProperty(name, All);
+        PropertyInfo? prop = FindProperty(type, name);
         if (prop is not null && prop.GetMethod is not null)
         {
             ParameterExpression param = Expression.Parameter(typeof(object), "target");
-            Expression castTarget = type.IsValueType ? Expression.Unbox(param, type) : Expression.Convert(param, type);
+            Expression castTarget = prop.DeclaringType!.IsValueType ? Expression.Unbox(param, prop.DeclaringType) : Expression.Convert(param, prop.DeclaringType);
             Expression call = Expression.Call(castTarget, prop.GetMethod);
             Expression castResult = Expression.Convert(call, typeof(object));
             return Expression.Lambda<Func<object, object?>>(castResult, param).Compile();
         }
-        FieldInfo? field = type.GetField(name, All);
+        FieldInfo? field = FindField(type, name);
         if (field is not null)
         {
             ParameterExpression param = Expression.Parameter(typeof(object), "target");
-            Expression castTarget = type.IsValueType ? Expression.Unbox(param, type) : Expression.Convert(param, type);
+            Expression castTarget = field.DeclaringType!.IsValueType ? Expression.Unbox(param, field.DeclaringType) : Expression.Convert(param, field.DeclaringType);
             Expression access = Expression.Field(castTarget, field);
             Expression castResult = Expression.Convert(access, typeof(object));
             return Expression.Lambda<Func<object, object?>>(castResult, param).Compile();
@@ -121,22 +141,24 @@ internal static class ReflectionTools
 
     private static Action<object, object?> CreateSetter(Type type, string name)
     {
-        PropertyInfo? prop = type.GetProperty(name, All);
+        PropertyInfo? prop = FindProperty(type, name);
         if (prop is not null && prop.SetMethod is not null)
         {
             ParameterExpression targetParam = Expression.Parameter(typeof(object), "target");
             ParameterExpression valueParam = Expression.Parameter(typeof(object), "value");
-            Expression castTarget = type.IsValueType ? Expression.Unbox(targetParam, type) : Expression.Convert(targetParam, type);
+            Expression castTarget = prop.DeclaringType!.IsValueType ? Expression.Unbox(targetParam, prop.DeclaringType) : Expression.Convert(targetParam, prop.DeclaringType);
             Expression castValue = Expression.Convert(valueParam, prop.PropertyType);
             Expression call = Expression.Call(castTarget, prop.SetMethod, castValue);
             return Expression.Lambda<Action<object, object?>>(call, targetParam, valueParam).Compile();
         }
-        FieldInfo? field = type.GetField(name, All);
+        FieldInfo? field = FindField(type, name);
         if (field is not null)
         {
+            if (field.IsInitOnly || field.IsLiteral)
+                return (target, val) => field.SetValue(target, val is null ? null : (field.FieldType.IsInstanceOfType(val) ? val : Convert.ChangeType(val, field.FieldType)));
             ParameterExpression targetParam = Expression.Parameter(typeof(object), "target");
             ParameterExpression valueParam = Expression.Parameter(typeof(object), "value");
-            Expression castTarget = type.IsValueType ? Expression.Unbox(targetParam, type) : Expression.Convert(targetParam, type);
+            Expression castTarget = field.DeclaringType!.IsValueType ? Expression.Unbox(targetParam, field.DeclaringType) : Expression.Convert(targetParam, field.DeclaringType);
             Expression castValue = Expression.Convert(valueParam, field.FieldType);
             Expression assign = Expression.Assign(Expression.Field(castTarget, field), castValue);
             return Expression.Lambda<Action<object, object?>>(assign, targetParam, valueParam).Compile();

@@ -38,7 +38,7 @@ public static class FullAppStateTracker
             Seed = runState?.Rng.StringSeed ?? "",
             Character = player?.Character.Id.Entry ?? "",
             Ascension = runState?.AscensionLevel ?? 0,
-            Act = runState?.ActFloor ?? 1,
+            Act = (runState?.CurrentActIndex ?? 0) + 1,
             Floor = runState?.TotalFloor ?? 0,
             Gold = player?.Gold ?? 0,
             PlayerHp = player?.Creature.CurrentHp ?? 0,

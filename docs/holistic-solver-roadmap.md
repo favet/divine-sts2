@@ -8,21 +8,19 @@ See `docs/architectural-guardrails.md` for the five permanent mathematical and a
 
 See `docs/project-status-and-review-guide.md` for the dated evidence snapshot, accepted/rejected proposal decisions, and active milestone order. That record controls when an older roadmap statement or outside performance estimate conflicts with current machine evidence.
 
-## Current program position — 2026-08-23
+## Current program position — 2026-08-29
 
-- **Phase 1: advanced, core architecture milestone PROVEN (GO).** The full-application native control bridge (`SlayTheSpire2.exe --headless` + isolated C# mod + TCP RPC) is verified 100% deterministic across 4 concurrent OS processes with zero synthetic state reconstruction. Broad native execution and automated isolated AutoTrace expand differential coverage across all 5 characters and combat tiers.
-- **Phase 2: experiments exist, no promoted critic.** The fixed-feature v8 corpus exposed an architecture ceiling, and the earlier ranking-qualified MLP failed fresh native search lift. A raw-token v9 corpus will be generated directly from the authoritative full-application environment.
-- **Phase 3: infrastructure prototypes only.** Native full-Act routes and macro choice boundaries execute, while live extraction, calibrated macro advice, and the HUD have not passed product gates.
+- **Phase 1: authoritative simulation & 20-worker farm PROVEN (GO).** Shipped mechanics run directly in isolated, presentation-suppressed .NET 9 workers with sustained 1,514+ decisions/second throughput, 100% zero-crash stability, and strict bit-for-bit mechanics fidelity.
+- **Phase 2 / 3A-3C: empirical search distillation ceiling diagnosed.** UCT MCTS (B=16) achieves ~90.6% win rate. Supervised search distillation into Combat Policy V2 jumped Top-1 teacher agreement from 49.7% to 75.2% and corrected 65.1% of search disagreements, but standalone native execution regressed to 72.7% (vs Frozen V1 at 75.8% and Expert Heuristic at 79.7%). Classification: **Category C (Offline-Only Success)**.
+- **Strategic Direction: STS1 Prior-Art Architecture Integration (`docs/research/sts1-prior-art-and-transfer-strategy.md`).** The project adopts seven foundational research principles derived from mature STS1 systems (Spire Pilot, AlphaStS, sts_lightspeed, bottled_ai, sts-rl-agent). Search is recognized as a permanent first-class runtime component (PUCT / hybrid beam), categorical HP/death-risk heads replace scalar expectations, and training transitions to iterative DAgger loops.
 
-The immediate critical path is: full-application native control bridge (GO) -> versioned v9 raw-token corpus -> action-conditioned critic -> untouched ranking and fresh-search lift -> uncertainty-aware search -> macro counterfactuals -> hardened live advisor. Performance work follows measured bottlenecks; it does not replace fidelity or policy gates.
+The immediate critical path is: Phase 3D network-guided PUCT evaluation -> Tactical failure regression corpus -> Iterative DAgger / relabeling loop -> Combat V3 typed-token transformer with categorical value distributions (`value_cat`) -> macro counterfactuals -> hardened live advisor.
 
-The 2026-08-23 breadth increment corrected the AutoTrace launcher before accepting new evidence: bounded timeout scales with requested combat count; seed/count/policy sandboxes are resumable; all candidates replay before a batch failure; failures retain JSON diagnostics; certified copies are collision-checked and atomic; canonical ten-character seeds are mandatory; and byte/semantic duplicates remain candidates instead of inflating certification. The driver reapplies the seed at the shipped lobby-ready boundary. Bounded exact native choice-path inference covers Survivor, Armaments, Havoc, and generated Skill Potion selections. Generic shipped room/combat/turn-start hooks now reconstruct Gorget and Cracked Core; opt-in orb snapshots certify capacity, model, passive/evoke values, and native RNG effects. Enemy block is restored after the shipped combat-start lifecycle, which made Cubex exact without reimplementing its mechanic.
-
-The current exact campaign inventory is `artifacts/differential-coverage-inventory.json` (SHA-256 `A56FB39D9B22DA295D7CF88EEEE4BEFCB8B0383EEF9E20E0F81EB7F628F4347F`). It is keyed by version plus assembly/PCK hashes and stores 49 exact certified trace hashes plus 797 distinct semantic-checkpoint hashes. The breadth gate is not complete because only 14 of the target 40+ encounter IDs are certified. The precise next blocker is deterministic coverage-guided seed/character/route scheduling for missing encounter/mechanic sets; the current shipped AutoSlayer chooses a deterministic run from a seed but cannot yet consume a gap manifest. Transformer/v9 work has not started.
+---
 
 ## Phase 1 — Trustworthy combat data engine
 
-Build a deterministic, high-throughput iterator around the isolated Python simulator without changing its legacy Gym interface.
+Build a deterministic, high-throughput iterator around native execution with verified provenance.
 
 Deliverables:
 
@@ -43,24 +41,28 @@ Promotion gates:
 - Native differential parity passes for the declared supported mechanics; everything else remains fail-closed or explicitly unverified.
 - Structured iterator throughput is measured and sufficient for sustained corpus generation.
 
-## Phase 2 — Tactical expert
+---
 
-Train an action-conditioned structured policy/value model using mixed-policy exploration and search-improved targets.
+## Phase 2 — Tactical expert & Search-Guided Policy
+
+Train an action-conditioned structured policy/value model using iterative search-improved targets and deploy it within information-consistent PUCT search.
 
 Deliverables:
 
-- Token encoders for card instances/zones, creatures/powers/intents, relic state, potions, character resources, and candidate actions.
-- Policy logits over native-derived legal actions plus value distributions for victory, HP loss, turns, and resource use.
-- A mixed corpus from heuristic, greedy, epsilon-random, model, and search policies across characters, archetypes, deck thickness, encounter tiers, ascension, and low-HP pressure states.
-- Iterative expert improvement: search labels states, the network distills the improved policy/value estimates, and the new network supplies better search priors.
-- GPU-batched offline training and asynchronous CPU rollout generation.
+- Typed-token Transformer encoder unifying card instances, creatures, power/status effects, relic state, potions, and candidate actions.
+- Categorical terminal HP distribution head (`value_cat` over 32 bins), calibrated $P(\text{death})$, and auxiliary mechanics heads (incoming unblocked damage, lethal detection, block requirements).
+- Decoupled multi-task value heads ($V_{\text{win}}$, $V_{\text{hp\_loss}}$, $V_{\text{relic\_ev}}$, $V_{\text{boss\_readiness}}$).
+- Hybrid search coordinator: deterministic within-turn beam search + inter-turn stochastic POMDP MCTS ($K \ge 5$ draw determinizations).
+- Iterative DAgger training loop: active policy rollouts $\to$ state harvesting $\to$ native search relabeling $\to$ policy update.
+- Permanent tactical failure corpus ($\ge 500$ blunder roots) serving as an automated promotion ratchet.
 
 Promotion gates:
 
 - At least 90% pairwise ranking accuracy on untouched native-held-out encounter/seed groups.
-- Statistically significant native search lift over greedy and heuristic baselines, with confidence intervals and no seed overlap.
-- Calibration and worst-slice reports, not only aggregate accuracy.
-- No default scorer promotion from Python-only labels; native relabeling or declared verified-slice provenance is required.
+- Statistically significant native search lift over greedy, heuristic, and prior-generation baselines, with confidence intervals and no seed overlap.
+- Zero suicidal lines chosen in high-variance validation scenarios; calibrated CVaR tail risk.
+- Less than 2% reverse regression on the locked tactical failure corpus.
+- Sub-50 ms mean decision latency under network-guided PUCT search ($B \le 8$).
 
 ## Phase 3 — Holistic run solver and live advisor
 

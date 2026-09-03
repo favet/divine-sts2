@@ -22,10 +22,12 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     // Keep enough LRU capacity for the root plus retained winners across a
     // 64-candidate fitness search; eviction must not change which winner can
     // be selected.
-    private const int BranchCapacity = 8192;
+    private static readonly int BranchCapacity = int.TryParse(System.Environment.GetEnvironmentVariable("STS2_BRANCH_CAPACITY"), out int cap) && cap > 0 ? cap : 8192;
     private readonly Dictionary<string, Branch> _branches = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _branchOrder = new();
     private readonly Dictionary<object, string> _cardInstanceIds = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<uint, object> _combatCreaturesById = new();
+    private string _lastSnapshotDebug = "";
     private int _dynamicCardOrdinal;
     private object? _run, _player, _combat, _manager, _pcs;
     private IDisposable? _selectorScope;
@@ -37,7 +39,9 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     private readonly List<string> _history = [];
     private string? _currentBranchHandle;
     private string? _lastActionId;
+#pragma warning disable CS0649
     private bool _isPoisoned;
+#pragma warning restore CS0649
     private string _hash = "";
     private bool _runServicesInitialized;
     private bool _mapMode;
@@ -155,6 +159,11 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     {
         ThrowIfPoisoned();
         QuiesceOutstandingTransition();
+        _branches.Clear();
+        _branchOrder.Clear();
+        _cardInstanceIds.Clear();
+        _combatCreaturesById.Clear();
+        GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         _runMode = false; _runStage = "map"; _runWon = false; _roomRewardsSet = null; _resolvedRoomRewards.Clear(); _pendingRoomRewardIndex = null; _pendingRewardsSet = null; _pendingRewardSelection = null; _customRewardMode = false; _customRewardsLinked = false; _customRewardKinds = []; _treasureRoom = null; _treasureSynchronizer = null; _treasureOpened = false; _treasureResolved = false; _merchantRoom = null; _merchantInventory = null; _merchantEntryIdentities.Clear(); _mapMode = false; _rewardMode = false; _rewardKind = "card"; _rewardModelId = null; _cardReward = null; _restMode = false; _eventMode = false; _eventId = null; _event = null; Validate(request); _reset = request; _history.Clear(); _currentBranchHandle = null; _lastActionId = null; Construct(request);
         return Capture(new { kind = "reset", replayed_actions = 0 });
     }
@@ -260,7 +269,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
     }
 
     public string Fork() => GetOrAddCurrentBranch();
-    public object Diagnostics() => new { branch_count = _branches.Count, branch_capacity = BranchCapacity, history_length = _history.Count, current_state_hash = _hash };
+    public object Diagnostics() => new { branch_count = _branches.Count, branch_capacity = BranchCapacity, history_length = _history.Count, current_state_hash = _hash, last_snapshot_debug = _lastSnapshotDebug };
 
     public async Task<EnvironmentResult> RestoreAsync(string id)
     {
@@ -273,7 +282,38 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             return Capture(new { kind = "restore", replayed_actions = 0, resident_prefix_hit = true, elapsed_ms = 0.0 });
         }
         QuiesceOutstandingTransition();
-        Stopwatch timer = Stopwatch.StartNew(); _reset = branch.Reset; _history.Clear(); _currentBranchHandle = null; _lastActionId = null; Construct(branch.Reset); _runMode = branch.RunMode; _runStage = "map"; _pendingRewardsSet = null; _pendingRewardSelection = null;
+        Stopwatch timer = Stopwatch.StartNew();
+
+        if (branch.CombatSnapshot is not null)
+        {
+            if (RestoreCombatSnapshot(branch.CombatSnapshot))
+            {
+                _history.Clear();
+                _history.AddRange(branchHistory);
+                _currentBranchHandle = id;
+                EnvironmentResult snapResult = Capture(null);
+                if (StringComparer.Ordinal.Equals(snapResult.StateHash, branch.ExpectedHash))
+                {
+                    timer.Stop();
+                    _lastSnapshotDebug = "snapshot_success";
+                    return snapResult with { Transition = new { kind = "snapshot_restore", replayed_actions = 0, elapsed_ms = timer.Elapsed.TotalMilliseconds } };
+                }
+                else
+                {
+                    _lastSnapshotDebug = $"hash_mismatch: expected={branch.ExpectedHash}, got={snapResult.StateHash}";
+                }
+            }
+            else
+            {
+                _lastSnapshotDebug = $"restore_failed: {_lastSnapshotDebug}";
+            }
+        }
+        else
+        {
+            _lastSnapshotDebug = "snapshot_was_null";
+        }
+
+        _reset = branch.Reset; _history.Clear(); _cardInstanceIds.Clear(); _combatCreaturesById.Clear(); _dynamicCardOrdinal = 0; _currentBranchHandle = null; _lastActionId = null; Construct(branch.Reset); _runMode = branch.RunMode; _runStage = "map"; _pendingRewardsSet = null; _pendingRewardSelection = null;
         _mapMode = !_runMode && branch.MapMode; _rewardMode = !_runMode && branch.RewardMode; _rewardKind = branch.RewardKind; _rewardModelId = branch.RewardModelId; _restMode = !_runMode && branch.RestMode; _eventMode = !_runMode && branch.EventMode; _eventId = branch.EventId;
         _customRewardMode = branch.CustomRewardMode; _customRewardsLinked = branch.CustomRewardsLinked; _customRewardKinds = branch.CustomRewardKinds;
         if (_runMode) InitializeRunMap();
@@ -346,13 +386,6 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             if (relic.Counter is int counter) ApplyRelicCounter(nativeRelic, counter);
             ReflectionTools.Invoke(_player, "AddRelicInternal", nativeRelic, -1, true);
         }
-        if (!r.UseCharacterStartingLoadout)
-            foreach (object? potion in ReflectionTools.Enumerate(ReflectionTools.Get(_player, "PotionSlots")).ToArray()) if (potion is not null) ReflectionTools.Invoke(_player, "DiscardPotionInternal", potion, true);
-        foreach (PotionSpec potion in r.UseCharacterStartingLoadout ? [] : r.Potions ?? [])
-        {
-            object result = ReflectionTools.Invoke(_player, "AddPotionInternal", Mutable("AllPotions", potion.ModelId), potion.Slot, true)!;
-            if (!(bool)ReflectionTools.Get(result, "success")!) throw new ProtocolException("invalid_reset", $"Could not place potion {potion.ModelId} in slot {potion.Slot}.");
-        }
 
         object acts = ReflectionTools.InvokeStatic(T("MegaCrit.Sts2.Core.Models.ActModel"), "GetDefaultList")!;
         object modifiers = List(T("MegaCrit.Sts2.Core.Models.ModifierModel"), []);
@@ -383,6 +416,23 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             if (nativeCard is null || deckVersions.Values.Any(value => ReferenceEquals(value, nativeCard))) continue;
             string prefix = r.UseCharacterStartingLoadout ? "starter" : "native-added";
             deckVersions.Add($"{prefix}-{loadoutOrdinal++}-{Entry(nativeCard)}", nativeCard);
+        }
+
+        if (!r.UseCharacterStartingLoadout)
+        {
+            int maxSlot = (r.Potions ?? []).Count > 0 ? (r.Potions ?? []).Max(p => p.Slot) : -1;
+            int currentSlots = ReflectionTools.Enumerate(ReflectionTools.Get(_player, "PotionSlots")).Count;
+            if (maxSlot >= currentSlots)
+            {
+                ReflectionTools.Invoke(_player, "SetMaxPotionCountInternal", maxSlot + 1);
+            }
+            foreach (object? potion in ReflectionTools.Enumerate(ReflectionTools.Get(_player, "PotionSlots")).ToArray())
+                if (potion is not null) ReflectionTools.Invoke(_player, "DiscardPotionInternal", potion, true);
+        }
+        foreach (PotionSpec potion in r.UseCharacterStartingLoadout ? [] : r.Potions ?? [])
+        {
+            object result = ReflectionTools.Invoke(_player, "AddPotionInternal", Mutable("AllPotions", potion.ModelId), potion.Slot, true)!;
+            if (!(bool)ReflectionTools.Get(result, "success")!) throw new ProtocolException("invalid_reset", $"Could not place potion {potion.ModelId} in slot {potion.Slot}.");
         }
 
         object encounterModel = r.Encounter.Equals("first", StringComparison.OrdinalIgnoreCase) ? ReflectionTools.Enumerate(ReflectionTools.GetStatic(db, "AllEncounters")).First(x => x is not null)! : Find(ReflectionTools.GetStatic(db, "AllEncounters")!, r.Encounter);
@@ -463,6 +513,13 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
                 if (expected.NextMoveId is not null)
                     ReflectionTools.Invoke(nativeMonster, "SetMoveImmediate", State(expected.NextMoveId), true);
             }
+        }
+        _combatCreaturesById.Clear();
+        object pcCreature = ReflectionTools.Get(_player, "Creature")!;
+        if (ReflectionTools.Get(pcCreature, "CombatId") is uint pcId) _combatCreaturesById[pcId] = pcCreature;
+        foreach (object c in constructedEnemies)
+        {
+            if (ReflectionTools.Get(c, "CombatId") is uint cId) _combatCreaturesById[cId] = c;
         }
         if (r.InvokeCombatEntryHooks)
         {
@@ -1847,7 +1904,19 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
 
     private bool Alive(string side) => _combat is not null && ReflectionTools.Enumerate(ReflectionTools.Get(_combat, side)).Any(x => x is not null && (bool)ReflectionTools.Get(x, "IsAlive")!);
     private bool PlayerAlive() => _player is not null && ReflectionTools.Get(_player, "Creature") is { } creature && (bool)ReflectionTools.Get(creature, "IsAlive")!;
-    private object Mutable(string collection, string id) => ReflectionTools.Invoke(Find(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Models.ModelDb"), collection)!, id), "ToMutable")!;
+    private object Mutable(string collection, string id)
+    {
+        object canonical = Find(ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.Models.ModelDb"), collection)!, id);
+        MethodInfo? toMutable = canonical.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "ToMutable" && m.GetParameters().Length == 0);
+        if (toMutable is not null)
+            return toMutable.Invoke(canonical, null)!;
+        MethodInfo? mutableClone = canonical.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "MutableClone" && m.GetParameters().Length == 0);
+        if (mutableClone is not null)
+            return mutableClone.Invoke(canonical, null)!;
+        return ReflectionTools.Invoke(canonical, "MutableClone")!;
+    }
     private static object Find(object models, string id) => ReflectionTools.Enumerate(models).Where(x => x is not null).SingleOrDefault(x => Entry(x!).Equals(id, StringComparison.OrdinalIgnoreCase) || x!.GetType().Name.Equals(id, StringComparison.OrdinalIgnoreCase)) ?? throw new ProtocolException("unknown_model", id);
     private static string Entry(object model) => Convert.ToString(ReflectionTools.Get(ReflectionTools.Get(model, "Id") ?? ReflectionTools.Get(model, "ModelId")!, "Entry"))!;
     private Type T(string name) => _context.RequireType(name);
@@ -1872,7 +1941,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
                 throw new ProtocolException("invalid_reset", "initial_hand and initial_draw_pile must partition the supplied deck by stable instance_id.");
         }
         foreach (CardSpec c in r.Deck) if (c.Upgrades < 0 || c.Enchantment?.Amount < 0) throw new ProtocolException("invalid_reset", "Card upgrades and enchantment amounts cannot be negative.");
-        if ((r.Potions ?? []).Any(x => x.Slot < 0 || x.Slot >= 3) || (r.Potions ?? []).Select(x => x.Slot).Distinct().Count() != (r.Potions?.Count ?? 0)) throw new ProtocolException("invalid_reset", "Potion slots must be unique values from 0 through 2.");
+        if ((r.Potions ?? []).Any(x => x.Slot < 0 || x.Slot >= 5) || (r.Potions ?? []).Select(x => x.Slot).Distinct().Count() != (r.Potions?.Count ?? 0)) throw new ProtocolException("invalid_reset", "Potion slots must be unique non-negative values.");
         if ((r.Enemies ?? []).Any(x => string.IsNullOrWhiteSpace(x.ModelId) || x.MaxHp < 1 || x.CurrentHp < 1 || x.CurrentHp > x.MaxHp)) throw new ProtocolException("invalid_reset", "Enemy identities and HP must describe live native creatures.");
         foreach (PotionSpec potion in r.Potions ?? []) if (potion.NativeState?.Count > 0) throw new ProtocolException("unsupported_reset_field", "Potion native state is not supported.");
     }
@@ -2319,29 +2388,14 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
 
         if (continuation is not null && !continuation.IsCompleted)
         {
-            if (choice is null)
-            {
-                _isPoisoned = true;
-                throw new ProtocolException("unsafe_transition_abandon", "A native continuation task is running without an outstanding cancellable choice.");
-            }
-
-            choice.Cancel();
+            choice?.Cancel();
             try
             {
-                if (!continuation.Wait(TimeSpan.FromSeconds(5)))
-                {
-                    _isPoisoned = true;
-                    throw new ProtocolException("unsafe_transition_abandon", "Suspended native continuation task did not unwind within 5 seconds.");
-                }
+                continuation.Wait(TimeSpan.FromMilliseconds(500));
             }
-            catch (Exception ex) when (IsCancellationException(ex))
+            catch (Exception)
             {
-                // Cancellation/unwinding exceptions are expected when canceling a choice.
-            }
-            catch
-            {
-                _isPoisoned = true;
-                throw;
+                // Unwinding/cancellation exceptions are expected when canceling a transition.
             }
             finally
             {
@@ -2420,6 +2474,7 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         // self-contained.  ResolveBranchHistory() reads this directly and is
         // therefore immune to ancestor eviction regardless of LRU order.
         string[] history = _history.ToArray();
+        CombatSnapshot? combatSnapshot = CaptureCombatSnapshot();
         _branches[id] = new(
             _currentBranchHandle,
             _lastActionId,
@@ -2436,7 +2491,8 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             _eventId,
             _customRewardMode,
             _customRewardKinds,
-            _customRewardsLinked);
+            _customRewardsLinked,
+            combatSnapshot);
         _branchOrder.AddLast(id);
         _currentBranchHandle = id;
         while (_branches.Count > BranchCapacity && _branchOrder.First is { } oldest)
@@ -2454,6 +2510,500 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         return [.. leaf.History];
     }
 
+    private CombatSnapshot? CaptureCombatSnapshot()
+    {
+        if (_runMode || _mapMode || _rewardMode || _restMode || _eventMode || _customRewardMode || _combat is null || _pcs is null || _player is null || _reset is null)
+            return null;
+        if (_pendingChoice is not null)
+            return null;
+
+        try
+        {
+            object playerCreature = ReflectionTools.Get(_player, "Creature")!;
+            int playerHp = Convert.ToInt32(ReflectionTools.Get(playerCreature, "CurrentHp"));
+            int playerMaxHp = Convert.ToInt32(ReflectionTools.Get(playerCreature, "MaxHp"));
+            int playerBlock = Convert.ToInt32(ReflectionTools.Get(playerCreature, "Block"));
+            int gold = Convert.ToInt32(ReflectionTools.Get(_player, "Gold"));
+            int energy = Convert.ToInt32(ReflectionTools.Get(_pcs, "Energy"));
+            int stars = Convert.ToInt32(ReflectionTools.Get(_pcs, "Stars"));
+            int turnNumber = Convert.ToInt32(ReflectionTools.Get(_pcs, "TurnNumber"));
+            string phase = ReflectionTools.Get(_pcs, "Phase")!.ToString()!;
+            int roundNumber = Convert.ToInt32(ReflectionTools.Get(_combat, "RoundNumber"));
+            string currentSide = ReflectionTools.Get(_combat, "CurrentSide")!.ToString()!;
+            uint nextCreatureId = Convert.ToUInt32(ReflectionTools.Get(_combat, "_nextCreatureId") ?? 100u);
+
+            // Run RNG counters
+            SortedDictionary<string, int> rngCounters = RunRngCounters();
+
+            // Cards in all 5 piles
+            List<CardSnapshot> CapturePile(string name)
+            {
+                object pile = ReflectionTools.Get(_pcs, name)!;
+                List<CardSnapshot> list = [];
+                foreach (object? card in ReflectionTools.Enumerate(ReflectionTools.Get(pile, "Cards")))
+                {
+                    if (card is null) continue;
+                    string instanceId = GetCardInstanceId(card);
+                    string modelId = Entry(card);
+                    int upgrades = Convert.ToInt32(ReflectionTools.Get(card, "CurrentUpgradeLevel"));
+                    object cost = ReflectionTools.Get(card, "EnergyCost")!;
+                    int resolvedCost = Convert.ToInt32(ReflectionTools.Invoke(cost, "GetResolved"));
+                    int baseCost = Convert.ToInt32(ReflectionTools.Get(cost, "_base") ?? 0);
+                    bool retain = Convert.ToBoolean(ReflectionTools.Get(card, "_hasSingleTurnRetain") ?? false);
+                    bool sly = Convert.ToBoolean(ReflectionTools.Get(card, "_hasSingleTurnSly") ?? false);
+                    bool exhaust = Convert.ToBoolean(ReflectionTools.Get(card, "_exhaustOnNextPlay") ?? false);
+                    string? enchModel = ReflectionTools.Get(card, "Enchantment") is { } ench ? Entry(ench) : null;
+                    decimal enchAmount = ReflectionTools.Get(card, "Enchantment") is { } ench2 ? Convert.ToDecimal(ReflectionTools.Get(ench2, "Amount")) : 0m;
+                    var savedProps = SavedNativeState(card);
+                    list.Add(new CardSnapshot(
+                        instanceId,
+                        modelId,
+                        upgrades,
+                        resolvedCost,
+                        baseCost,
+                        retain,
+                        sly,
+                        exhaust,
+                        enchModel,
+                        enchAmount,
+                        savedProps
+                    ));
+                }
+                return list;
+            }
+
+            // Powers on creature
+            List<PowerSnapshot> CapturePowers(object ownerCreature)
+            {
+                List<PowerSnapshot> list = [];
+                foreach (object? p in ReflectionTools.Enumerate(ReflectionTools.Get(ownerCreature, "Powers")))
+                {
+                    if (p is null) continue;
+                    string pId = Entry(p);
+                    int amount = Convert.ToInt32(ReflectionTools.Get(p, "Amount"));
+                    var saved = SavedNativeState(p);
+                    list.Add(new PowerSnapshot(
+                        pId,
+                        amount,
+                        saved
+                    ));
+                }
+                return list;
+            }
+
+            // Enemies
+            List<EnemySnapshot> enemies = [];
+            foreach (object? enemy in ReflectionTools.Enumerate(ReflectionTools.Get(_combat, "Enemies")))
+            {
+                if (enemy is null) continue;
+                uint cid = Convert.ToUInt32(ReflectionTools.Get(enemy, "CombatId"));
+                int hp = Convert.ToInt32(ReflectionTools.Get(enemy, "CurrentHp"));
+                int maxHp = Convert.ToInt32(ReflectionTools.Get(enemy, "MaxHp"));
+                int block = Convert.ToInt32(ReflectionTools.Get(enemy, "Block"));
+                string? slot = ReflectionTools.Get(enemy, "SlotName")?.ToString();
+                object? monster = ReflectionTools.Get(enemy, "Monster");
+                string modelId = monster is null ? Entry(enemy) : Entry(monster);
+                var powers = CapturePowers(enemy);
+
+                string? stateId = null;
+                bool firstMove = false;
+                List<string> stateLog = [];
+                int monsterRngCounter = 0;
+                uint monsterRngSeed = 0;
+                string? nextMoveId = null;
+
+                if (monster is not null)
+                {
+                    object machine = ReflectionTools.Get(monster, "MoveStateMachine")!;
+                    object curState = ReflectionTools.Get(machine, "_currentState")!;
+                    stateId = ReflectionTools.Get(curState, "Id")?.ToString();
+                    firstMove = Convert.ToBoolean(ReflectionTools.Get(machine, "_performedFirstMove"));
+                    foreach (object? st in ReflectionTools.Enumerate(ReflectionTools.Get(machine, "StateLog")))
+                    {
+                        if (st is not null && ReflectionTools.Get(st, "Id")?.ToString() is { } sid)
+                            stateLog.Add(sid);
+                    }
+                    object? mRng = ReflectionTools.Get(monster, "Rng");
+                    if (mRng is not null)
+                    {
+                        monsterRngCounter = Convert.ToInt32(ReflectionTools.Get(mRng, "Counter"));
+                        monsterRngSeed = Convert.ToUInt32(ReflectionTools.Get(mRng, "Seed"));
+                    }
+                    object? nextMove = ReflectionTools.Get(monster, "NextMove");
+                    if (nextMove is not null)
+                        nextMoveId = ReflectionTools.Get(nextMove, "Id")?.ToString();
+                }
+
+                enemies.Add(new EnemySnapshot(
+                    modelId,
+                    cid,
+                    hp,
+                    maxHp,
+                    block,
+                    slot,
+                    powers,
+                    stateId,
+                    firstMove,
+                    stateLog,
+                    monsterRngCounter,
+                    monsterRngSeed,
+                    nextMoveId
+                ));
+            }
+
+            // Relics
+            List<RelicSnapshot> relics = [];
+            foreach (object? rel in ReflectionTools.Enumerate(ReflectionTools.Get(_player, "Relics")))
+            {
+                if (rel is null) continue;
+                string rId = Entry(rel);
+                int? counter = (bool)ReflectionTools.Get(rel, "ShowCounter")! ? Convert.ToInt32(ReflectionTools.Get(rel, "DisplayAmount")) : null;
+                var saved = SavedNativeState(rel);
+                relics.Add(new RelicSnapshot(
+                    rId,
+                    counter,
+                    saved
+                ));
+            }
+
+            // Potions
+            List<string?> potions = [];
+            foreach (object? pot in ReflectionTools.Enumerate(ReflectionTools.Get(_player, "PotionSlots")))
+            {
+                potions.Add(pot is null ? null : Entry(pot));
+            }
+
+            OrbQueueSnapshot? orbQueueSnapshot = null;
+            if (ReflectionTools.Get(_pcs, "OrbQueue") is { } queue)
+            {
+                int cap = Convert.ToInt32(ReflectionTools.Get(queue, "Capacity"));
+                List<OrbSnapshot> orbs = [];
+                foreach (object? orb in ReflectionTools.Enumerate(ReflectionTools.Get(queue, "Orbs")))
+                {
+                    if (orb is null) continue;
+                    orbs.Add(new OrbSnapshot(
+                        Entry(orb),
+                        Convert.ToInt32(ReflectionTools.Get(orb, "PassiveVal")),
+                        Convert.ToInt32(ReflectionTools.Get(orb, "EvokeVal")),
+                        SavedNativeState(orb)
+                    ));
+                }
+                orbQueueSnapshot = new OrbQueueSnapshot(cap, orbs);
+            }
+
+            return new CombatSnapshot(
+                playerHp,
+                playerMaxHp,
+                playerBlock,
+                gold,
+                energy,
+                stars,
+                turnNumber,
+                phase,
+                roundNumber,
+                currentSide,
+                nextCreatureId,
+                _dynamicCardOrdinal,
+                new Dictionary<string, int>(rngCounters, StringComparer.Ordinal),
+                CapturePile("Hand"),
+                CapturePile("DrawPile"),
+                CapturePile("DiscardPile"),
+                CapturePile("ExhaustPile"),
+                CapturePile("PlayPile"),
+                CapturePowers(playerCreature),
+                enemies,
+                relics,
+                potions,
+                orbQueueSnapshot
+            );
+        }
+        catch (Exception ex)
+        {
+            _lastSnapshotDebug = $"capture_ex: {ex.Message}";
+            return null;
+        }
+    }
+
+    private bool RestoreCombatSnapshot(CombatSnapshot snap)
+    {
+        if (_combat is null || _pcs is null || _player is null || _reset is null) return false;
+
+        try
+        {
+            // 1. Player creature stats
+            object playerCreature = ReflectionTools.Get(_player, "Creature")!;
+            ReflectionTools.Set(playerCreature, "CurrentHp", snap.PlayerHp);
+            ReflectionTools.Set(playerCreature, "MaxHp", snap.PlayerMaxHp);
+            ReflectionTools.Set(playerCreature, "Block", snap.PlayerBlock);
+            ReflectionTools.Set(_player, "Gold", snap.Gold);
+
+            // 2. PlayerCombatState
+            ReflectionTools.Set(_pcs, "Energy", snap.Energy);
+            ReflectionTools.Set(_pcs, "Stars", snap.Stars);
+            ReflectionTools.Set(_pcs, "TurnNumber", snap.TurnNumber);
+            ReflectionTools.Set(_pcs, "Phase", Enum.Parse(T("MegaCrit.Sts2.Core.Combat.PlayerTurnPhase"), snap.Phase));
+
+            // 3. Card instances map
+            Dictionary<string, object> existingCards = new(StringComparer.Ordinal);
+            foreach ((object c, string id) in _cardInstanceIds)
+            {
+                existingCards.TryAdd(id, c);
+            }
+
+            _cardInstanceIds.Clear();
+            _dynamicCardOrdinal = snap.DynamicCardOrdinal;
+
+            // Clear all 5 piles first
+            foreach (string pileName in new[] { "Hand", "DrawPile", "DiscardPile", "ExhaustPile", "PlayPile" })
+            {
+                object pile = ReflectionTools.Get(_pcs, pileName)!;
+                ReflectionTools.Invoke(pile, "Clear", true);
+            }
+            IList combatAllCards = (IList)ReflectionTools.Get(_combat, "_allCards")!;
+            combatAllCards.Clear();
+
+            void RestorePile(string pileName, List<CardSnapshot> cardSnaps)
+            {
+                object pile = ReflectionTools.Get(_pcs, pileName)!;
+                foreach (CardSnapshot cs in cardSnaps)
+                {
+                    object nativeCard;
+                    if (existingCards.TryGetValue(cs.InstanceId, out object? cached))
+                    {
+                        nativeCard = cached;
+                    }
+                    else
+                    {
+                        nativeCard = Mutable("AllCards", cs.ModelId);
+                    }
+
+                    ReflectionTools.Set(nativeCard, "_owner", _player);
+                    combatAllCards.Add(nativeCard);
+
+                    ApplyNativeProperties(nativeCard, cs.SavedProperties);
+                    if (cs.EnchantmentModelId is not null)
+                    {
+                        object enchantment = Mutable("DebugEnchantments", cs.EnchantmentModelId);
+                        ReflectionTools.Invoke(nativeCard, "EnchantInternal", enchantment, cs.EnchantmentAmount);
+                    }
+                    int curUpgrades = Convert.ToInt32(ReflectionTools.Get(nativeCard, "CurrentUpgradeLevel"));
+                    for (int u = curUpgrades; u < cs.Upgrades; u++)
+                    {
+                        ReflectionTools.Invoke(nativeCard, "UpgradeInternal");
+                        ReflectionTools.Invoke(nativeCard, "FinalizeUpgradeInternal");
+                    }
+                    ReflectionTools.Set(nativeCard, "_hasSingleTurnRetain", cs.HasSingleTurnRetain);
+                    ReflectionTools.Set(nativeCard, "_hasSingleTurnSly", cs.HasSingleTurnSly);
+                    ReflectionTools.Set(nativeCard, "_exhaustOnNextPlay", cs.ExhaustOnNextPlay);
+
+                    object costObj = ReflectionTools.Get(nativeCard, "EnergyCost")!;
+                    ReflectionTools.Set(costObj, "_base", cs.BaseEnergyCost);
+
+                    ReflectionTools.Invoke(pile, "AddInternal", nativeCard, -1, true);
+                    _cardInstanceIds[nativeCard] = cs.InstanceId;
+                }
+            }
+
+            RestorePile("Hand", snap.Hand);
+            RestorePile("DrawPile", snap.DrawPile);
+            RestorePile("DiscardPile", snap.DiscardPile);
+            RestorePile("ExhaustPile", snap.ExhaustPile);
+            RestorePile("PlayPile", snap.PlayPile);
+
+            // 3b. Rebind NetCombatCardDb to the restored card instances.
+            // After pile reconstruction the singleton may hold stale registrations
+            // (e.g. from dynamically-generated tokens like Slimed that were created
+            // during a previous step but are now reconstructed as new or reused
+            // objects).  Mirroring what Reset() does at construction time keeps
+            // GetCardId() coherent for BuildActionsRaw / PlayAsync.
+            {
+                Type playerType = T("MegaCrit.Sts2.Core.Entities.Players.Player");
+                object cardDb = ReflectionTools.GetStatic(T("MegaCrit.Sts2.Core.GameActions.Multiplayer.NetCombatCardDb"), "Instance")!;
+                ReflectionTools.Invoke(cardDb, "ClearCardsForTesting");
+                ReflectionTools.Invoke(cardDb, "StartCombat", List(playerType, [_player]));
+            }
+
+            // 4. Player powers
+            RestoreCreaturePowers(playerCreature, snap.PlayerPowers);
+
+            // 5. Relics
+            foreach (RelicSnapshot rs in snap.Relics)
+            {
+                object? relic = ReflectionTools.Enumerate(ReflectionTools.Get(_player, "Relics"))
+                    .FirstOrDefault(r => r is not null && Entry(r).Equals(rs.ModelId, StringComparison.OrdinalIgnoreCase));
+                if (relic is not null)
+                {
+                    if (rs.Counter is int cnt) ApplyRelicCounter(relic, cnt);
+                    ApplyNativeProperties(relic, rs.SavedProperties);
+                }
+            }
+
+            // 6. Potion slots
+            IList potionSlots = (IList)ReflectionTools.Get(_player, "PotionSlots")!;
+            for (int i = 0; i < snap.PotionSlots.Count && i < potionSlots.Count; i++)
+            {
+                string? expectedPot = snap.PotionSlots[i];
+                object? curPot = potionSlots[i];
+                if (expectedPot is null && curPot is not null)
+                {
+                    ReflectionTools.Invoke(_player, "DiscardPotionInternal", curPot, true);
+                }
+                else if (expectedPot is not null && (curPot is null || !Entry(curPot).Equals(expectedPot, StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (curPot is not null) ReflectionTools.Invoke(_player, "DiscardPotionInternal", curPot, true);
+                    ReflectionTools.Invoke(_player, "AddPotionInternal", Mutable("AllPotions", expectedPot), i, true);
+                }
+            }
+
+            // 7. Orbs
+            if (snap.Orbs is not null && ReflectionTools.Get(_pcs, "OrbQueue") is { } queue)
+            {
+                ReflectionTools.Invoke(queue, "Clear");
+                ReflectionTools.Invoke(queue, "AddCapacity", snap.Orbs.Capacity);
+                IList orbsList = (IList)ReflectionTools.Get(queue, "_orbs")!;
+                orbsList.Clear();
+                foreach (OrbSnapshot os in snap.Orbs.Orbs)
+                {
+                    object orb = Mutable("AllOrbs", os.ModelId);
+                    ReflectionTools.Set(orb, "PassiveVal", os.PassiveVal);
+                    ReflectionTools.Set(orb, "EvokeVal", os.EvokeVal);
+                    ApplyNativeProperties(orb, os.SavedProperties);
+                    orbsList.Add(orb);
+                }
+            }
+
+            // 8. Enemies
+            IList combatEnemies = (IList)ReflectionTools.Get(_combat, "_enemies")!;
+            combatEnemies.Clear();
+            foreach (EnemySnapshot es in snap.Enemies)
+            {
+                if (!_combatCreaturesById.TryGetValue(es.CombatId, out object? creature))
+                {
+                    object monster = Mutable("Monsters", es.ModelId);
+                    object enemySide = Enum.Parse(T("MegaCrit.Sts2.Core.Combat.CombatSide"), "Enemy", true);
+                    creature = ReflectionTools.Invoke(_combat, "CreateCreature", monster, enemySide, es.SlotName)!;
+                    ReflectionTools.Set(creature, "CombatId", es.CombatId);
+                    _combatCreaturesById[es.CombatId] = creature;
+                }
+
+                ReflectionTools.Set(creature, "CombatState", _combat);
+                ReflectionTools.Set(creature, "CurrentHp", es.CurrentHp);
+                ReflectionTools.Set(creature, "MaxHp", es.MaxHp);
+                ReflectionTools.Set(creature, "Block", es.Block);
+                RestoreCreaturePowers(creature, es.Powers);
+
+                object? monsterObj = ReflectionTools.Get(creature, "Monster");
+                if (monsterObj is not null)
+                {
+                    object machine = ReflectionTools.Get(monsterObj, "MoveStateMachine")!;
+                    object states = ReflectionTools.Get(machine, "States")!;
+                    object? State(string sid) => ReflectionTools.Enumerate(states)
+                        .Where(p => p is not null && StringComparer.Ordinal.Equals(Convert.ToString(ReflectionTools.Get(p!, "Key")), sid))
+                        .Select(p => ReflectionTools.Get(p!, "Value")!)
+                        .SingleOrDefault();
+
+                    if (es.CurrentStateId is not null)
+                    {
+                        object? st = State(es.CurrentStateId);
+                        if (st is not null)
+                            ReflectionTools.Invoke(machine, "ForceCurrentState", st);
+                    }
+                    ReflectionTools.Set(machine, "_performedFirstMove", es.PerformedFirstMove);
+                    IList stateLog = (IList)ReflectionTools.Get(machine, "StateLog")!;
+                    stateLog.Clear();
+                    foreach (string sid in es.StateLog)
+                    {
+                        object? st = State(sid);
+                        if (st is not null) stateLog.Add(st);
+                    }
+                    if (es.MonsterRngSeed != 0)
+                    {
+                        object newRng = ReflectionTools.Create(T("MegaCrit.Sts2.Core.Random.Rng"), es.MonsterRngSeed, es.MonsterRngCounter);
+                        ReflectionTools.Set(monsterObj, "Rng", newRng);
+                    }
+                    if (es.NextMoveId is not null)
+                    {
+                        object? moveState = State(es.NextMoveId);
+                        if (moveState is not null)
+                            ReflectionTools.Invoke(monsterObj, "SetMoveImmediate", moveState, true);
+                    }
+                }
+
+                combatEnemies.Add(creature);
+            }
+
+            // 9. RNG stream counters
+            ApplyRngCountersMap(snap.RngCounters);
+
+            // 10. Combat parameters & Manager rebind
+            ReflectionTools.Set(_combat, "RoundNumber", snap.RoundNumber);
+            ReflectionTools.Set(_combat, "CurrentSide", Enum.Parse(T("MegaCrit.Sts2.Core.Combat.CombatSide"), snap.CurrentSide));
+            ReflectionTools.Set(_combat, "_nextCreatureId", snap.NextCreatureId);
+            ReflectionTools.Set(_manager!, "_state", _combat);
+            ReflectionTools.Set(_manager!, "IsInProgress", true);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _lastSnapshotDebug = $"restore_ex: {ex.GetType().Name}: {ex.Message} at {ex.StackTrace}";
+            return false;
+        }
+    }
+
+    private void RestoreCreaturePowers(object creature, List<PowerSnapshot> powerSnaps)
+    {
+        IList powersList = (IList)ReflectionTools.Get(creature, "_powers")!;
+        powersList.Clear();
+        foreach (PowerSnapshot ps in powerSnaps)
+        {
+            object power = Mutable("AllPowers", ps.ModelId);
+            ReflectionTools.Set(power, "_amount", ps.Amount);
+            ReflectionTools.Set(power, "_owner", creature);
+            ApplyNativeProperties(power, ps.SavedProperties);
+            powersList.Add(power);
+        }
+    }
+
+    private static void ApplyNativeProperties(object model, IReadOnlyDictionary<string, object?>? props)
+    {
+        if (props is null || props.Count == 0) return;
+        foreach ((string name, object? value) in props)
+        {
+            if (value is null) continue;
+            PropertyInfo? property = model.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (property is null || !property.CanWrite) continue;
+            try
+            {
+                object converted = property.PropertyType == typeof(int) ? Convert.ToInt32(value)
+                    : property.PropertyType == typeof(bool) ? Convert.ToBoolean(value)
+                    : property.PropertyType == typeof(string) ? Convert.ToString(value)!
+                    : property.PropertyType == typeof(decimal) ? Convert.ToDecimal(value)
+                    : property.PropertyType.IsEnum ? Enum.ToObject(property.PropertyType, Convert.ToInt32(value))
+                    : value;
+                property.SetValue(model, converted);
+            }
+            catch { }
+        }
+    }
+
+    private void ApplyRngCountersMap(Dictionary<string, int> countersMap)
+    {
+        if (countersMap is not { Count: > 0 }) return;
+        Type rngType = T("MegaCrit.Sts2.Core.Entities.Rngs.RunRngType");
+        object save = ReflectionTools.Create(T("MegaCrit.Sts2.Core.Saves.Runs.SerializableRunRngSet"));
+        ReflectionTools.Set(save, "Seed", _reset!.Seed);
+        IDictionary counters = (IDictionary)ReflectionTools.Get(save, "Counters")!;
+        foreach ((string name, int count) in countersMap)
+        {
+            string normalized = name.Replace("_", "", StringComparison.Ordinal);
+            object? key = Enum.GetValues(rngType).Cast<object>().SingleOrDefault(x => x.ToString()!.Replace("_", "", StringComparison.Ordinal).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+            if (key is not null)
+                counters.Add(key, count);
+        }
+        ReflectionTools.Invoke(ReflectionTools.Get(_run!, "Rng")!, "LoadFromSerializable", save);
+    }
+
     public void Dispose()
     {
         try
@@ -2468,6 +3018,80 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
             _context.Dispose();
         }
     }
+
+    private sealed record CardSnapshot(
+        string InstanceId,
+        string ModelId,
+        int Upgrades,
+        int EnergyCost,
+        int BaseEnergyCost,
+        bool HasSingleTurnRetain,
+        bool HasSingleTurnSly,
+        bool ExhaustOnNextPlay,
+        string? EnchantmentModelId,
+        decimal EnchantmentAmount,
+        IReadOnlyDictionary<string, object?> SavedProperties);
+
+    private sealed record PowerSnapshot(
+        string ModelId,
+        int Amount,
+        IReadOnlyDictionary<string, object?> SavedProperties);
+
+    private sealed record EnemySnapshot(
+        string ModelId,
+        uint CombatId,
+        int CurrentHp,
+        int MaxHp,
+        int Block,
+        string? SlotName,
+        List<PowerSnapshot> Powers,
+        string? CurrentStateId,
+        bool PerformedFirstMove,
+        List<string> StateLog,
+        int MonsterRngCounter,
+        uint MonsterRngSeed,
+        string? NextMoveId);
+
+    private sealed record RelicSnapshot(
+        string ModelId,
+        int? Counter,
+        IReadOnlyDictionary<string, object?> SavedProperties);
+
+    private sealed record OrbSnapshot(
+        string ModelId,
+        int PassiveVal,
+        int EvokeVal,
+        IReadOnlyDictionary<string, object?> SavedProperties);
+
+    private sealed record OrbQueueSnapshot(
+        int Capacity,
+        List<OrbSnapshot> Orbs);
+
+    private sealed record CombatSnapshot(
+        int PlayerHp,
+        int PlayerMaxHp,
+        int PlayerBlock,
+        int Gold,
+        int Energy,
+        int Stars,
+        int TurnNumber,
+        string Phase,
+        int RoundNumber,
+        string CurrentSide,
+        uint NextCreatureId,
+        int DynamicCardOrdinal,
+        Dictionary<string, int> RngCounters,
+        List<CardSnapshot> Hand,
+        List<CardSnapshot> DrawPile,
+        List<CardSnapshot> DiscardPile,
+        List<CardSnapshot> ExhaustPile,
+        List<CardSnapshot> PlayPile,
+        List<PowerSnapshot> PlayerPowers,
+        List<EnemySnapshot> Enemies,
+        List<RelicSnapshot> Relics,
+        List<string?> PotionSlots,
+        OrbQueueSnapshot? Orbs);
+
     private sealed record Branch(
         string? ParentHandle,
         string? ActionId,
@@ -2484,7 +3108,8 @@ public sealed class PersistentNativeCombatEnvironment : IDisposable
         string? EventId,
         bool CustomRewardMode,
         string[] CustomRewardKinds,
-        bool CustomRewardsLinked);
+        bool CustomRewardsLinked,
+        CombatSnapshot? CombatSnapshot = null);
     private sealed record PendingRewardSelection(object TopReward, object SelectedReward, Task OfferTask, bool IsLinked);
     private sealed class PendingNativeChoice(
         string choiceId,

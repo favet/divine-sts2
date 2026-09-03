@@ -282,7 +282,8 @@ class NativeWorker:
 
     def _remember_handle(self, handle: str) -> None:
         self._handle_histories[handle] = list(self._history); self._handle_histories.move_to_end(handle)
-        while len(self._handle_histories) > 8192: self._handle_histories.popitem(last=False)
+        cap = int(os.environ.get("STS2_BRANCH_CAPACITY", "8192"))
+        while len(self._handle_histories) > cap: self._handle_histories.popitem(last=False)
 
     def export_branch(self) -> dict[str, Any]:
         if self._reset_state is None or self._reset_request is None: raise NativeSimError("not_reset", "Call reset before exporting a branch")
